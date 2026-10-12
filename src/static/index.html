@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>{{title}} · 空间记忆</title><link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-page="{{page}}">
+<a class="skip" href="#main-action">跳到主要操作</a>
+<main>
+<header class="page-header"><h1>{{title}}</h1></header>
+<p class="intro memory-only">记住物品的位置，需要时再问我。</p>
+<p class="intro video-only">把物品对准镜头，问我是什么。</p>
+<section class="answer-card" aria-labelledby="answer-title"><h2 id="answer-title" class="sr-only">助手回答</h2><p id="latest-answer" tabindex="-1">{{welcome}}</p></section>
+<p id="answer-live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+<section id="pending" class="pending memory-only" aria-labelledby="pending-title" hidden><h2 id="pending-title">请确认这次操作</h2><p id="pending-text"></p><div class="two-buttons"><button id="confirm" class="primary">确认执行</button><button id="cancel">取消</button></div></section>
+<section class="session" aria-label="对话控制">
+<p id="connection" class="sr-only">文字记忆可用</p>
+<section class="camera-panel video-only" aria-label="摄像头画面">
+<div id="camera-preview" class="preview" hidden><video id="preview" autoplay muted playsinline aria-label="本地摄像头画面"></video><div id="camera-empty"><p>摄像头未开启</p></div></div>
+</section>
+<div id="main-action" class="main-actions" tabindex="-1">
+<button id="main-toggle" class="primary main-button" aria-describedby="session-privacy">开始</button>
+<button id="replay" class="replay-button" disabled>再听一遍</button>
+</div>
+<div class="video-only">
+<p id="camera-state" role="status" aria-atomic="true">点击开始后，可以边看边说。</p>
+</div>
+<p id="voice-state" class="memory-only" role="status" aria-atomic="true">点击开始后，直接说话就可以。</p>
+<p id="session-privacy" class="muted small"><span class="video-only">声音和画面由千问处理，默认观察 30 秒。</span><span class="memory-only">语音开启后，声音和相关记录由千问处理。</span></p>
+</section>
+<details id="more-tools" class="more-tools"><summary>更多</summary><div class="more-content">
+<button id="open-settings" class="full-width" aria-haspopup="dialog">连接与声音设置</button>
+<div id="session-controls" class="session-controls" hidden><button id="pause">暂停对话</button><button id="interrupt">打断回答</button></div>
+<details id="text-tools" class="disclosure"><summary>用文字交流</summary><form id="chat-form"><label for="message">输入你想说的话</label><div class="input-row"><input id="message" autocomplete="off" maxlength="400" placeholder="{{placeholder}}"><button type="submit" class="primary">发送</button></div></form><p class="muted small memory-only">例如：记住，钥匙刚放在玄关桌上。</p><p class="muted small video-only">观察画面时优先口头提问；文字交流需要先连接助手。</p></details>
+<details class="disclosure memory-only"><summary>我的物品记忆 <span id="count">0 件</span></summary><p class="muted small">这里是之前告诉我的位置，尚未确认现在是否仍在那里。</p><div id="memories"></div></details>
+<details class="disclosure video-only"><summary>观察选项</summary><label for="video-duration">这次观察多久</label><select id="video-duration"><option value="10">10 秒</option><option value="30" selected>30 秒</option><option value="60">60 秒</option></select><p id="video-progress" class="muted small">尚未发送画面。</p><div class="photo-actions"><button id="video-again" hidden>再观察一次</button><button id="video-stop" hidden>只停止视频，继续语音</button><button id="camera-open">只打开本地预览</button><button id="camera-send" disabled>发送一张照片</button><button id="camera-close" disabled>关闭摄像头</button></div><p class="muted small">仅预览不上传；程序不保存原始录音录像。观察结果不会自动写入物品记忆。</p></details>
+<details class="disclosure"><summary>对话记录</summary><div id="chat" class="chat" role="log" aria-live="off" aria-label="对话记录"></div></details>
+</div></details>
+</main>
+<nav class="bottom-nav" aria-label="主要功能"><a href="/video" data-page-link="video"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="6" width="12" height="12" rx="3"/><path d="m15 10 6-3v10l-6-3"/></svg><span>视频理解</span></a><a href="/memory" data-page-link="memory"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3M9 21h6"/></svg><span>语音记忆</span></a></nav>
+<dialog id="settings-dialog" aria-labelledby="settings-title"><div class="section-heading"><h2 id="settings-title">设置</h2><button id="settings-close">关闭</button></div><p id="config-state" role="status">连接尚未设置。</p><form id="settings-form"><label for="workspace">业务空间 ID</label><input id="workspace" placeholder="填写你的百炼业务空间 ID" autocomplete="off" required><label for="region">连接地域</label><select id="region"><option value="beijing">北京</option><option value="singapore">新加坡</option></select><label for="key">API Key</label><input id="key" type="password" autocomplete="off" spellcheck="false" required placeholder="在这里填写新密钥"><button class="primary full-width" type="submit">保存连接设置</button><button id="clear-config" class="full-width" type="button">清除连接设置</button></form><div class="preferences"><label class="checkbox"><input id="read-aloud" type="checkbox">朗读本地文字回答</label><label class="checkbox"><input id="screen-reader-mode" type="checkbox">使用读屏播报回答</label></div><details><summary>连接说明与用量</summary><p class="muted small">密钥仅保存在本次程序运行的内存中。每轮对话最长 10 分钟；用量不是费用上限。</p><p id="usage" class="small">尚无云端调用。</p><p class="muted small">语音、视频识别效果及手机真机仍待测试；NFC 和房间定位尚未接入。</p><a href="https://help.aliyun.com/zh/model-studio/get-api-key" target="_blank" rel="noreferrer">查看千问配置说明</a></details></dialog>
+<p id="notice" class="notice" role="alert" hidden></p>
+<script src="/static/video-stream.js"></script><script src="/static/app.js"></script>
+</body></html>

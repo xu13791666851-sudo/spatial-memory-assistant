@@ -1,0 +1,21 @@
+# Local prototypes, dependencies, memories, credentials, certificates and screenshots.
+/work/
+/outputs/
+/start.cmd
+/start-mobile.cmd
+/start-mobile.ps1
+/测试使用说明.md
+/手机测试使用说明.md
+/BeMyAI*.md
+**/data/
+**/__pycache__/
+**/.venv/
+.env
+.env.*
+*.key
+*.pem
+*.mobileconfig
+*.db
+*.db-*
+*.log
+
