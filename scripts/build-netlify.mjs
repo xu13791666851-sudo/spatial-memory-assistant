@@ -18,7 +18,19 @@ js=js.replace("case 'app.error':", "case 'app.audio_blocked':notify(event.messag
 js=js.replace("width:{ideal:640},height:{ideal:480},facingMode", "width:{ideal:640,max:640},height:{ideal:480,max:640},frameRate:{ideal:1,max:2},facingMode");
 js=js.replace("const image=captureFrame();if(!image)return false;wsSend({type:'video_frame',id:videoId,image});return true;", "wsSend({type:'video_tick',id:videoId});return true;");
 js=js.replaceAll('已发送 0 张画面。','已观察 0 秒。').replaceAll('已发送 ${event.frames} 张画面。','已观察 ${event.frames} 秒。').replaceAll('本次已发送 ${event.frames} 张画面。','本次已观察 ${event.frames} 秒。');
-js=js.replace("async function navigateToPage(url){await stop();location.assign(url);}",`async function navigateToPage(url,push=true){await stop();PAGE=url==='/memory'?'memory':'video';document.body.dataset.page=PAGE;document.querySelector('h1').textContent=PAGE==='memory'?'语音记忆':'视频理解';document.title=(PAGE==='memory'?'语音记忆':'视频理解')+' · 空间记忆';lastAnswer='';$('replay').disabled=true;$('latest-answer').textContent=PAGE==='memory'?'你可以说：钥匙在哪？':'开始观察后，你可以问：我手里拿的是什么？';$('message').placeholder=PAGE==='memory'?'例如：钥匙在哪':'输入你想问的问题';document.querySelectorAll('[data-page-link]').forEach(a=>{if(a.dataset.pageLink===PAGE)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});if(push)history.pushState({},'',url);if(PAGE==='memory')await refresh();stateUI('点击开始后，直接说话就可以。');}window.addEventListener('popstate',()=>navigateToPage(location.pathname,false));`);
+js=js.replace("async function navigateToPage(url){await stop();location.assign(url);}",`async function navigateToPage(url,push=true){
+  await stop();
+  PAGE=url==='/memory'?'memory':'video';document.body.dataset.page=PAGE;
+  document.querySelector('h1').textContent=PAGE==='memory'?'语音记忆':'视频理解';
+  document.title=(PAGE==='memory'?'语音记忆':'视频理解')+' · 空间记忆';
+  lastAnswer='';$('replay').disabled=true;$('answer-live').textContent='';
+  $('latest-answer').textContent=PAGE==='memory'?'你可以说：钥匙在哪？':'开始观察后，你可以问：我手里拿的是什么？';
+  $('message').placeholder=PAGE==='memory'?'例如：钥匙在哪':'输入你想问的问题';
+  $('connection').textContent=configured?'连接已设置':(PAGE==='memory'?'文字记忆可用':'连接尚未设置');
+  document.querySelectorAll('[data-page-link]').forEach(a=>{if(a.dataset.pageLink===PAGE)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
+  if(push)history.pushState({},'',url);if(PAGE==='memory')await refresh();
+  stateUI('点击开始后，直接说话就可以。');
+}window.addEventListener('popstate',()=>navigateToPage(location.pathname,false));`);
 await fs.writeFile(path.join(dist,'static/app.js'),js);
 let template=await fs.readFile(path.join(root,'src/static/index.html'),'utf8');
 template=template.replace('密钥仅保存在本次程序运行的内存中。','密钥仅保存在当前页面内存中。建立连接时经本站 Netlify 函数用于千问鉴权；程序不保存密钥，刷新后需重新填写。');
