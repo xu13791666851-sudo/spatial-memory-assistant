@@ -1,0 +1,38 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+const root=process.cwd(),dist=path.join(root,'dist');
+await fs.mkdir(path.join(dist,'static'),{recursive:true});
+await fs.cp(path.join(root,'src/static'),path.join(dist,'static'),{recursive:true});
+await fs.copyFile(path.join(root,'web/memory.mjs'),path.join(dist,'static/memory.mjs'));
+await fs.copyFile(path.join(root,'web/runtime.mjs'),path.join(dist,'static/runtime.mjs'));
+let js=await fs.readFile(path.join(root,'src/static/app.js'),'utf8');
+js=js.replace("const PAGE=document.body.dataset.page;","import {runtime} from './runtime.mjs';\nlet PAGE=document.body.dataset.page;\nawait runtime.loaded;");
+js=js.replace("const res=await fetch(path,", "if(window.spatialRuntime)return window.spatialRuntime.api(path,body,method);\n const res=await fetch(path,");
+js=js.replace(/async function startMic\(\)\{[^\n]*\}\r?\nfunction cameraUI/,"async function startMic(){const generation=++micGeneration;const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});if(generation!==micGeneration||!socket||!ready){stream.getTracks().forEach(t=>t.stop());return false;}micStream=stream;await socket.attachAudio(stream);return true;}\nfunction cameraUI");
+js=js.replace("await audioContext.audioWorklet.addModule('/static/recorder.js');",'');
+js=js.replace("function stopPlayback(){", "function stopPlayback(){socket?.stopPlayback?.();");
+js=js.replace("socket=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws/realtime`);", "socket=new window.spatialRuntime.Bridge();");
+js=js.replace("const status=await (await fetch('/api/status')).json();", "const status=window.spatialRuntime.status();");
+js=js.replace("if(id==='screen-reader-mode'&&$(id).checked)stopPlayback();", "if(id==='screen-reader-mode')socket?.updatePlayback?.();if(id==='screen-reader-mode'&&$(id).checked)stopPlayback();");
+js=js.replace("case 'app.error':", "case 'app.audio_blocked':notify(event.message,0);break;\n case 'app.error':");
+js=js.replace("width:{ideal:640},height:{ideal:480},facingMode", "width:{ideal:640,max:640},height:{ideal:480,max:640},frameRate:{ideal:1,max:2},facingMode");
+js=js.replace("const image=captureFrame();if(!image)return false;wsSend({type:'video_frame',id:videoId,image});return true;", "wsSend({type:'video_tick',id:videoId});return true;");
+js=js.replaceAll('已发送 0 张画面。','已观察 0 秒。').replaceAll('已发送 ${event.frames} 张画面。','已观察 ${event.frames} 秒。').replaceAll('本次已发送 ${event.frames} 张画面。','本次已观察 ${event.frames} 秒。');
+js=js.replace("async function navigateToPage(url){await stop();location.assign(url);}",`async function navigateToPage(url,push=true){await stop();PAGE=url==='/memory'?'memory':'video';document.body.dataset.page=PAGE;document.querySelector('h1').textContent=PAGE==='memory'?'语音记忆':'视频理解';document.title=(PAGE==='memory'?'语音记忆':'视频理解')+' · 空间记忆';lastAnswer='';$('replay').disabled=true;$('latest-answer').textContent=PAGE==='memory'?'你可以说：钥匙在哪？':'开始观察后，你可以问：我手里拿的是什么？';$('message').placeholder=PAGE==='memory'?'例如：钥匙在哪':'输入你想问的问题';document.querySelectorAll('[data-page-link]').forEach(a=>{if(a.dataset.pageLink===PAGE)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});if(push)history.pushState({},'',url);if(PAGE==='memory')await refresh();stateUI('点击开始后，直接说话就可以。');}window.addEventListener('popstate',()=>navigateToPage(location.pathname,false));`);
+await fs.writeFile(path.join(dist,'static/app.js'),js);
+let template=await fs.readFile(path.join(root,'src/static/index.html'),'utf8');
+template=template.replace('密钥仅保存在本次程序运行的内存中。','密钥仅保存在当前页面内存中。建立连接时经本站 Netlify 函数用于千问鉴权；程序不保存密钥，刷新后需重新填写。');
+template=template.replace('这里是之前告诉我的位置，尚未确认现在是否仍在那里。','记录只保存在当前浏览器中，清除浏览器数据会删除；它们是历史位置，尚未确认现在是否仍在那里。');
+template=template.replace('本地程序没有准备好','网页没有准备好');
+template=template.replace('发送一张照片','查看当前画面');
+template=template.replace('语音、视频识别效果及手机真机仍待测试；NFC 和房间定位尚未接入。','公网版使用浏览器实时通话。实际千问连接、摄像头及 iPhone 体验仍需真机验证；NFC 和房间定位尚未接入。');
+template=template.replace('<details class="disclosure"><summary>对话记录','<audio id="remote-audio" autoplay playsinline aria-label="助手语音" hidden></audio><details class="disclosure"><summary>对话记录');
+template=template.replace('<script src="/static/video-stream.js"></script><script src="/static/app.js"></script>','<script src="/static/video-stream.js"></script><script type="module" src="/static/app.js"></script>');
+for(const mode of ['video','memory']){
+  let html=template;
+  const values=mode==='video'?{page:mode,title:'视频理解',welcome:'开始观察后，你可以问：我手里拿的是什么？',placeholder:'输入你想问的问题'}:{page:mode,title:'语音记忆',welcome:'你可以说：钥匙在哪？',placeholder:'例如：钥匙在哪'};
+  for(const [key,value]of Object.entries(values))html=html.replaceAll(`{{${key}}}`,value);
+  await fs.mkdir(path.join(dist,mode),{recursive:true});await fs.writeFile(path.join(dist,mode,'index.html'),html);
+  if(mode==='video')await fs.writeFile(path.join(dist,'index.html'),html);
+}
+console.log('Netlify build ready: video, memory, local records and realtime SDP function.');

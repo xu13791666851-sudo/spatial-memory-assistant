@@ -1,0 +1,49 @@
+const clean=(value,max=120)=>{
+  if(typeof value!=='string')throw Error('请提供有效的名称或位置。');
+  value=value.trim().replace(/^[，。！？!?,\s]+|[，。！？!?,\s]+$/g,'');
+  if(!value||value.length>max||/[\x00-\x1f]/.test(value))throw Error('请提供简短、有效的名称或位置。');
+  return value;
+};
+export class Memory {
+  constructor(storage,clock=()=>Date.now(),uuid=()=>crypto.randomUUID()){
+    this.storage=storage;this.clock=clock;this.uuid=uuid;this.pending=null;this.last='';this.key='spatial-memory.records.v1';
+  }
+  rows(){
+    const raw=JSON.parse(this.storage.getItem(this.key)||'[]');
+    if(!Array.isArray(raw))throw Error('本机记录无法读取，请先检查浏览器数据。');
+    return raw.filter(r=>r&&typeof r.name==='string'&&typeof r.location==='string'&&typeof r.recorded_at==='string'&&r.source==='MANUAL'&&r.state==='HISTORICAL');
+  }
+  all(){const map=new Map();for(const r of this.rows())map.set(r.name,r);return [...map.values()].reverse();}
+  get(name){return this.all().find(r=>r.name===name)||null;}
+  answer(name){const r=this.get(name);return r?`你之前提供的记录：${name}在${r.location}，放置时间为“${r.event_time}”，记录于${new Date(r.recorded_at).toLocaleString('zh-CN')}。还没有确认现在的位置。`:`没有找到${name}的位置记录。`;}
+  prepare({action,name,location='',event_time='时间未说明'}){
+    if(!['record','move','correct','delete'].includes(action))throw Error('不支持这个操作。');
+    name=clean(name,40);if(action!=='delete')location=clean(location);event_time=clean(event_time,80);
+    if(action==='correct'&&!this.get(name))throw Error('没有可以更正的记录。');
+    this.last=name;this.pending={action,name,location,event_time,token:this.uuid(),expires:this.clock()+300000};
+    return {answer:'请点击页面上的确认按钮，确认后才会保存或删除。',pending:this.pending,saved:false};
+  }
+  confirm(token,cancel=false){
+    const p=this.pending;
+    if(!p||p.token!==token||p.expires<=this.clock()){this.pending=null;throw Error('待确认操作已失效，请重新说明。');}
+    if(cancel){this.pending=null;return this.result('已取消。');}
+    const rows=this.rows();const old=this.get(p.name);
+    const next=p.action==='delete'?rows.filter(r=>r.name!==p.name):[...rows,{id:this.uuid(),name:p.name,location:p.location,event_time:p.action==='correct'?old.event_time:p.event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'}];
+    this.storage.setItem(this.key,JSON.stringify(next));
+    this.pending=null;return this.result(p.action==='delete'?'已删除这件物品的本机记录。':'已保存你提供的位置，尚未确认现在的位置。');
+  }
+  result(answer){return {answer,items:this.all(),pending:this.pending};}
+  command(text){
+    text=clean(text,400);
+    let match=text.match(/^记住[，,\s]*(?:我)?(?:(昨天|刚刚|刚才|今天)[，,\s]*)?(?:把)?(.+?)(?:刚放在|放在|在)(.+)$/);
+    if(match){this.prepare({action:'record',name:match[2],location:match[3],event_time:match[1]||'时间未说明'});return this.result('请确认这次位置记录。');}
+    match=text.match(/^(.+?)(?:在哪|在哪里|放哪了)[？?]?$/);
+    if(match){this.last=clean(match[1],40);return this.result(this.answer(this.last));}
+    match=text.match(/^删除(.+?)(?:的记录)?$/);
+    if(match){this.prepare({action:'delete',name:match[1]});return this.result('请确认删除。');}
+    if(text==='确认'&&this.pending)return this.confirm(this.pending.token);
+    if(text==='取消'&&this.pending)return this.confirm(this.pending.token,true);
+    if(text==='什么时候记录的'&&this.last)return this.result(this.answer(this.last));
+    return this.result('文字测试可以说“记住，钥匙放在玄关桌上”或“钥匙在哪”。自由语音对话请先配置千问。');
+  }
+}

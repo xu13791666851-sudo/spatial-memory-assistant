@@ -49,11 +49,26 @@ node test_video_frontend.cjs
 
 测试使用模拟千问连接，不产生模型费用，也不能替代真实设备和云端测试。
 
-## GitHub 与手机在线访问
+## Netlify 公网访问
+
+仓库新增了适合 Netlify 的构建与连接适配。导入本仓库后，使用构建命令 `node scripts/build-netlify.mjs`、发布目录 `dist`、函数目录 `netlify/functions`。也可以直接采用 `netlify.toml` 中的配置。
+
+公网版本沿用原来的两页界面，使用浏览器 WebRTC 与千问持续通话，Netlify 函数仅负责连接时的 SDP 转发，不承接长期 WebSocket。每位访问者自己填写密钥，密钥只在当前页面内存中保留，连接时经本站函数用于千问鉴权；程序不保存或打印密钥。刷新或关闭页面后需重新填写。视频采用低帧率媒体轨道，而不是原来本地版的 JPEG WebSocket 上传；观察时间仍受页面与连接控制限制。
+
+物品记忆保存在当前浏览器，不与电脑 SQLite 数据库同步，也不与其他访问者共享。只有查询时才把相关记录提供给千问；保存和删除仍需确认。iPhone 使用 Safari 打开 Netlify 的 HTTPS 地址后，无须安装本地测试证书。
+
+```bash
+node scripts/build-netlify.mjs
+node --test tests/web.test.mjs
+```
+
+浏览器媒体权限、网络到千问的连通性及模型准确度仍须实际设备验证。Netlify 和百炼的用量及额度以各自控制台为准。
+
+## GitHub 与其他托管方式
 
 GitHub 仓库用于保存和分享程序。GitHub Pages 只能托管静态网页，不能运行本项目的 Python 后端和实时语音转发服务，因此仅上传代码不会得到完整可用的在线语音视频产品。
 
-若要让手机直接打开普通 HTTPS 链接而无须安装测试证书，需要将后端部署到支持 HTTPS、WebSocket 和访问保护的服务器。公开部署前还需要隔离不同用户的密钥与记忆，不能直接把本机测试服务公开到互联网。
+原始 Python 后端如需部署到其他平台，需要支持 HTTPS、WebSocket 和访问保护的服务器；不能直接把本机测试服务公开到互联网。上述 Netlify 适配采用不同的连接方式，并保持访问者的密钥和记忆彼此隔离。
 
 仓库不包含真实 API Key、个人物品记录、私人截图、访问码或本地服务器证书。
 

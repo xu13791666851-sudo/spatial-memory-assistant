@@ -1,0 +1,10 @@
+{
+  "name": "spatial-memory-assistant",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-netlify.mjs",
+    "test:web": "node --test tests/web.test.mjs"
+  },
+  "engines": { "node": ">=22" }
+}
