@@ -74,5 +74,7 @@ await fs.writeFile(path.join(dist,'index.html'),html);
 for(const alias of ['video','memory']){
   await fs.mkdir(path.join(dist,alias),{recursive:true});await fs.writeFile(path.join(dist,alias,'index.html'),html);
 }
+// Include routing rules in the published directory as well as project config.
+await fs.writeFile(path.join(dist,'_redirects'),'/memory /video/ 301!\n/ /video/ 302!\n');
 await fs.appendFile(path.join(dist,'static/style.css'),'\nbody[data-page=assistant] main{padding-bottom:calc(32px + env(safe-area-inset-bottom))}body[data-page=assistant] .notice{bottom:calc(20px + env(safe-area-inset-bottom))}body[data-page=assistant] .session p[role=status]:empty{display:none}\n');
 console.log('Netlify build ready: one assistant page with vision, voice and confirmed memory.');
