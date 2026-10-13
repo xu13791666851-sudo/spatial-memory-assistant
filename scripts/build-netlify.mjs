@@ -37,6 +37,17 @@ js=js.replace("async function navigateToPage(url){await stop();location.assign(u
   if(push)history.pushState({},'',url);if(PAGE==='memory')await refresh();
   stateUI('点击开始后，直接说话就可以。');
 }window.addEventListener('popstate',()=>navigateToPage(location.pathname,false));`);
+// The hosted assistant keeps vision and memory in one session and one page.
+js=js.replace('let PAGE=document.body.dataset.page;','const PAGE="assistant";');
+js=js.replace(/document.querySelectorAll\('\[data-page-link\]'\)\.forEach\(link=>\{[^\n]*\}\);\r?\n/,'');
+js=js.replace(/async function navigateToPage\(url,push=true\)\{[\s\S]*?window.addEventListener\('popstate',\(\)=>navigateToPage\(location.pathname,false\)\);/,'');
+js=js.replace("if(PAGE!=='video')return;","if(PAGE!=='video'&&PAGE!=='assistant')return;");
+js=js.replaceAll("PAGE==='video'?'开始观察':'开始对话'","'开始对话'");
+js=js.replace("else if(PAGE==='video')await startVideo();","else if(PAGE==='video'||PAGE==='assistant')await startVideo();");
+js=js.replace("if(PAGE==='memory')await refresh();",'await refresh();');
+js=js.replaceAll("(PAGE==='memory'?'文字记忆可用':'连接尚未设置')","'文字记忆可用'");
+js=js.replace("delete:'删除全部记录'","delete:'删除这件物品的记录'");
+js=js.replace('本地程序没有准备好，请刷新或重新启动。','网页没有准备好，请刷新后重试。');
 await fs.writeFile(path.join(dist,'static/app.js'),js);
 let template=await fs.readFile(path.join(root,'src/static/index.html'),'utf8');
 template=template.replace('密钥仅保存在本次程序运行的内存中。','密钥仅保存在当前页面内存中。建立连接时经本站 Netlify 函数用于千问鉴权；程序不保存密钥，刷新后需重新填写。');
@@ -48,11 +59,20 @@ template=template.replace(/密钥仅保存在当前页面内存中。建立连�
 template=template.replace('语音、视频识别效果及手机真机仍待测试；NFC 和房间定位尚未接入。','公网版使用浏览器实时通话。实际千问连接、摄像头及 iPhone 体验仍需真机验证；NFC 和房间定位尚未接入。');
 template=template.replace('<details class="disclosure"><summary>对话记录','<audio id="remote-audio" autoplay playsinline aria-label="助手语音" hidden></audio><details class="disclosure"><summary>对话记录');
 template=template.replace('<script src="/static/video-stream.js"></script><script src="/static/app.js"></script>','<script src="/static/video-stream.js"></script><script type="module" src="/static/app.js"></script>');
-for(const mode of ['video','memory']){
-  let html=template;
-  const values=mode==='video'?{page:mode,title:'视频理解',welcome:'开始观察后，你可以问：我手里拿的是什么？',placeholder:'输入你想问的问题'}:{page:mode,title:'语音记忆',welcome:'你可以说：钥匙在哪？',placeholder:'例如：钥匙在哪'};
-  for(const [key,value]of Object.entries(values))html=html.replaceAll(`{{${key}}}`,value);
-  await fs.mkdir(path.join(dist,mode),{recursive:true});await fs.writeFile(path.join(dist,mode,'index.html'),html);
-  if(mode==='video')await fs.writeFile(path.join(dist,'index.html'),html);
+template=template.replace(/<p class="intro memory-only">[\s\S]*?<\/p>\s*<p class="intro video-only">[\s\S]*?<\/p>/,'<p class="intro">看物品、记位置，需要时直接问我。</p>');
+template=template.replace(/<nav class="bottom-nav"[\s\S]*?<\/nav>/,'');
+template=template.replace('<title>{{title}} · 空间记忆</title>','<title>{{title}}</title>');
+template=template.replace(/\b(memory-only|video-only)\b/g,'');
+template=template.replace('点击开始后，可以边看边说。','').replace('点击开始后，直接说话就可以。','');
+template=template.replace(/<p id="session-privacy"[\s\S]*?<\/p>/,'<p id="session-privacy" class="muted small">开始后开启语音和摄像头。画面默认观察 30 秒，随后语音继续；保存位置需要确认。</p>');
+template=template.replace('观察画面时优先口头提问；文字交流需要先连接助手。','不开启摄像头也可用文字记录和查询位置。识别画面或自由对话请先点击“开始对话”。');
+template=template.replace('删除全部记录','删除记录');
+const values={page:'assistant',title:'空间记忆助手',welcome:'你可以问：“这是什么？”、“钥匙在哪？”\n也可以说：“记住，钥匙放在抽屉里。”',placeholder:'例如：记住，钥匙放在抽屉里'};
+let html=template;
+for(const [key,value]of Object.entries(values))html=html.replaceAll(`{{${key}}}`,value);
+await fs.writeFile(path.join(dist,'index.html'),html);
+for(const alias of ['video','memory']){
+  await fs.mkdir(path.join(dist,alias),{recursive:true});await fs.writeFile(path.join(dist,alias,'index.html'),html);
 }
-console.log('Netlify build ready: video, memory, local records and realtime SDP function.');
+await fs.appendFile(path.join(dist,'static/style.css'),'\nbody[data-page=assistant] main{padding-bottom:calc(32px + env(safe-area-inset-bottom))}body[data-page=assistant] .notice{bottom:calc(20px + env(safe-area-inset-bottom))}body[data-page=assistant] .session p[role=status]:empty{display:none}\n');
+console.log('Netlify build ready: one assistant page with vision, voice and confirmed memory.');

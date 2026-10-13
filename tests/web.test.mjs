@@ -118,3 +118,27 @@ test('session tools keep visual and memory permissions separate',()=>{
   assert.deepEqual(sessionConfig('video').session.tools.map(t=>t.function.name),['stop_video']);
   assert.ok(!sessionConfig('memory').session.tools.some(t=>t.function.name==='stop_video'));
 });
+
+test('combined session can observe and remember, with explicit confirmation before saving',()=>{
+  assert.deepEqual(sessionConfig('assistant').session.tools.map(t=>t.function.name),['stop_video','query_memory','list_memories','prepare_memory']);
+  const {runtime}=runtimeFixture();const bridge=new runtime.Bridge();bridge.mode='assistant';
+  const sent=[];bridge.channel={readyState:'open',send:e=>sent.push(JSON.parse(e))};
+  const call=(name,args,id)=>bridge.event({type:'response.done',response:{output:[{type:'function_call',call_id:id,name,arguments:JSON.stringify(args)}]}},bridge.channel);
+  call('prepare_memory',{action:'record',name:'钥匙',location:'抽屉里'},'record');
+  assert.equal(runtime.memory.get('钥匙'),null);assert.ok(runtime.memory.pending);
+  const result=JSON.parse(sent.find(e=>e.item?.call_id==='record').item.output);assert.equal(result.saved,false);
+  runtime.memory.confirm(runtime.memory.pending.token);
+  call('stop_video',{},'close-camera');assert.equal(bridge.closed,false);
+  call('query_memory',{name:'钥匙'},'find');
+  const found=JSON.parse(sent.find(e=>e.item?.call_id==='find').item.output);
+  assert.equal(found.record.location,'抽屉里');assert.equal(found.is_current,false);
+  bridge.close();
+});
+
+test('combined session supports native video without stopping the original preview track',async()=>{
+  const {runtime,preview}=runtimeFixture();const bridge=new runtime.Bridge();bridge.mode='assistant';bridge.configured=true;
+  let stopped=false;preview.srcObject={getVideoTracks:()=>[{readyState:'live',clone:()=>({stop(){stopped=true;}})}]};
+  bridge.videoSender={replaceTrack:async()=>{},getParameters:()=>({encodings:[]})};
+  await bridge.attachVideo();bridge.endVideo('观察结束，语音继续');
+  assert.equal(stopped,true);assert.equal(bridge.closed,false);bridge.close();
+});

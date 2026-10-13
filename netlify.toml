@@ -10,6 +10,24 @@
   # Keep API key and access-code scanning enabled.
   SECRETS_SCAN_OMIT_KEYS = "DASHSCOPE_REGION"
 
+[[redirects]]
+  from = "/memory"
+  to = "/video/"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/memory/"
+  to = "/video/"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/"
+  to = "/video/"
+  status = 302
+  force = true
+
 [[headers]]
   for = "/*"
   [headers.values]
