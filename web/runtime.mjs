@@ -18,8 +18,8 @@ export function sessionConfig(mode){
 export function createRuntime(env){
   const {storage,document,fetch:fetcher,RTCPeerConnection:Peer,createImageBitmap:bitmap}=env;
   const memory=new Memory(storage);
-  let settings={key:'',workspace:'',region:'beijing'};
-  try{settings.workspace=storage.getItem('spatial-workspace')||'';settings.region=storage.getItem('spatial-region')||'beijing';}catch{}
+  let settings={configured:false,authenticated:false};
+  const loadAccess=async()=>{try{const response=await fetcher('/api/access',{cache:'no-store'});if(response.ok)settings=await response.json();}catch{};};
   const eventNames=new Set(['input_audio_buffer.speech_started','input_audio_buffer.speech_stopped','conversation.item.input_audio_transcription.completed','response.audio_transcript.delta','response.audio_transcript.done','response.text.delta','response.text.done']);
   class Bridge{
     constructor(){
@@ -96,7 +96,7 @@ export function createRuntime(env){
           this.pc.addEventListener('icegatheringstatechange',check);this.requestController.signal.addEventListener('abort',cancel,{once:true});check();
         });
         if(this.closed)return;
-        const response=await fetcher('/api/realtime/sdp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...settings,sdp:this.pc.localDescription.sdp}),signal:this.requestController.signal});
+        const response=await fetcher('/api/realtime/sdp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sdp:this.pc.localDescription.sdp}),signal:this.requestController.signal});
         if(this.closed)return;
         if(!response.ok){let message='千问连接未能完成，请检查配置。';try{message=(await response.json()).detail||message;}catch{}this.emit({type:'app.error',message});this.close();return;}
         const sdp=(await response.text()).trim().replace(/\r?\n/g,'\r\n')+'\r\n';
@@ -179,15 +179,12 @@ export function createRuntime(env){
       queueMicrotask(()=>this.onclose?.());
     }
   }
-  return {loaded:Promise.resolve(),Bridge,memory,status:()=>({token:'browser-local',configured:!!settings.key,workspace:settings.workspace,region:settings.region}),
+  return {loaded:loadAccess(),Bridge,memory,status:()=>({token:'browser-local',configured:!!settings.configured&&!!settings.authenticated,fixedKey:true,serverConfigured:!!settings.configured,workspace:'',region:'beijing'}),
     async api(path,body,method='POST'){
       if(path==='/api/config'){
-        if(method==='DELETE'){settings.key='';return {configured:false};}
-        const key=String(body.key||'').trim(),workspace=String(body.workspace||'').trim();
-        if(!/^sk-[\x21-\x7e]{17,509}$/.test(key)||!/^[A-Za-z0-9_-]{1,128}$/.test(workspace)||!['beijing','singapore'].includes(body.region))throw Error('请检查密钥、业务空间 ID 和地域。');
-        settings={key,workspace,region:body.region};
-        try{storage.setItem('spatial-workspace',workspace);storage.setItem('spatial-region',body.region);}catch{}
-        return {configured:true,message:'连接设置已保存到当前页面内存，刷新后密钥会清除。'};
+        const response=await fetcher('/api/access',{method:method==='DELETE'?'DELETE':'POST',headers:{'Content-Type':'application/json'},...(method==='DELETE'?{}:{body:JSON.stringify({accessCode:body.accessCode})})});
+        const result=await response.json();if(!response.ok)throw Error(result.detail||'暂未完成连接。');settings=result;
+        return {configured:!!result.authenticated,message:method==='DELETE'?'已退出本设备的访问授权。':'已连接，通常 30 天内无须再次输入访问码。'};
       }
       if(path==='/api/memories')return {items:memory.all()};
       if(path==='/api/command')return memory.command(body.text);

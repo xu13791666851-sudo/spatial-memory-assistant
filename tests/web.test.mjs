@@ -3,11 +3,14 @@ import assert from 'node:assert/strict';
 import {Memory} from '../web/memory.mjs';
 import {createRuntime,sessionConfig} from '../web/runtime.mjs';
 import {exchange} from '../netlify/functions/realtime-sdp.mjs';
+import {access} from '../netlify/functions/access.mjs';
+import {issueSession,authenticated,sessionCookie} from '../netlify/lib/access.mjs';
 
 const storage=()=>{const map=new Map();return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,v),map};};
 const key='sk-offline-test-only-xxxxxxxxxxxxxxxx';
-const request=(body,origin='https://example.netlify.app')=>new Request('https://example.netlify.app/api/realtime/sdp',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
+const request=(body,origin='https://example.netlify.app',cookie=sessionCookie(issueSession(serverEnv)))=>new Request('https://example.netlify.app/api/realtime/sdp',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',Cookie:cookie},body:JSON.stringify(body)});
 const config={key,workspace:'ws-test-fixture',region:'beijing',sdp:'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n'};
+const serverEnv={DASHSCOPE_API_KEY:key,DASHSCOPE_WORKSPACE_ID:config.workspace,APP_ACCESS_CODE:'fixture-access-code'};
 
 test('memory is pending until confirmation and survives a new instance',()=>{
   const data=storage(),m=new Memory(data,()=>1000000,()=>String(Math.random()));
@@ -36,34 +39,58 @@ test('expired confirmation and invalid actions cannot mutate records',()=>{
 });
 test('SDP exchange permits only same-origin and validated Alibaba workspace targets',async()=>{
   let calls=0;const noFetch=async()=>{calls++;throw Error('unexpected network');};
-  assert.equal((await exchange(request(config,'https://evil.example'),noFetch)).status,403);
-  assert.equal((await exchange(request({...config,workspace:'evil.example/attack'}),noFetch)).status,400);
-  assert.equal((await exchange(request({...config,sdp:'not an offer'}),noFetch)).status,400);
+  assert.equal((await exchange(request(config,'https://evil.example'),noFetch,serverEnv)).status,403);
+  assert.equal((await exchange(request(config,'https://example.netlify.app',''),noFetch,serverEnv)).status,401);
+  assert.equal((await exchange(request({...config,sdp:'not an offer'}),noFetch,serverEnv)).status,400);
   assert.equal(calls,0);
 });
 test('SDP success forwards credentials only to fixed endpoint and returns no key',async()=>{
-  const response=await exchange(request(config),async(url,options)=>{
+  const response=await exchange(request({...config,key:'ignored',workspace:'evil.example/attack'}),async(url,options)=>{
     assert.equal(url,'https://ws-test-fixture.cn-beijing.maas.aliyuncs.com/api/v1/webrtc/realtime?model=qwen3.8-omni-flash-realtime');
     assert.equal(options.headers.Authorization,'Bearer '+key);assert.equal(options.redirect,'error');
     return new Response('v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n');
-  });
+  },serverEnv);
   assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');assert.ok(!(await response.text()).includes(key));
 });
 test('upstream auth errors and exceptions never echo secrets',async()=>{
   for(const factory of [async()=>Response.json({code:'InvalidApiKey',message:key},{status:401}),async()=>{throw Error(key);}]){
-    const response=await exchange(request(config),factory);assert.ok(response.status>=400);assert.ok(!(await response.text()).includes(key));
+    const response=await exchange(request(config),factory,serverEnv);assert.ok(response.status>=400);assert.ok(!(await response.text()).includes(key));
   }
 });
 function runtimeFixture(){
   const data=storage(),audio={muted:false,pause(){},hidden:true},preview={srcObject:null};
   const document={getElementById:id=>id==='remote-audio'?audio:id==='preview'?preview:{checked:false}};
-  const runtime=createRuntime({storage:data,document,fetch:()=>{throw Error('No real network');},RTCPeerConnection:class{}});
+  let loggedIn=false;
+  const fetcher=async(url,options={})=>{
+    assert.equal(url,'/api/access');
+    if(options.method==='POST'){assert.deepEqual(JSON.parse(options.body),{accessCode:'fixture-access-code'});loggedIn=true;}
+    if(options.method==='DELETE')loggedIn=false;
+    return Response.json({configured:true,authenticated:loggedIn,fixedKey:true});
+  };
+  const runtime=createRuntime({storage:data,document,fetch:fetcher,RTCPeerConnection:class{}});
   return {runtime,data,preview,audio};
 }
-test('API key never enters persistent storage and settings clear it',async()=>{
-  const {runtime,data}=runtimeFixture();await runtime.api('/api/config',config);
+test('fixed key is never entered or persisted by browser and device logout clears access',async()=>{
+  const {runtime,data}=runtimeFixture();await runtime.loaded;await runtime.api('/api/config',{accessCode:'fixture-access-code'});
   assert.equal(runtime.status().configured,true);assert.ok(!JSON.stringify([...data.map]).includes(key));
   await runtime.api('/api/config',null,'DELETE');assert.equal(runtime.status().configured,false);
+});
+test('public status never exposes backend key, workspace or access code',async()=>{
+  const response=await access(new Request('https://example.netlify.app/api/access'),serverEnv);
+  const text=await response.text();assert.ok(!text.includes(key));assert.ok(!text.includes(serverEnv.APP_ACCESS_CODE));assert.ok(!text.includes(config.workspace));
+});
+test('access creates HttpOnly secure session that survives requests, rejects forgery and expires',async()=>{
+  const req=new Request('https://example.netlify.app/api/access',{method:'POST',headers:{Origin:'https://example.netlify.app'},body:JSON.stringify({accessCode:serverEnv.APP_ACCESS_CODE})});
+  const response=await access(req,serverEnv);assert.equal(response.status,200);
+  const cookie=response.headers.get('set-cookie');assert.match(cookie,/HttpOnly/);assert.match(cookie,/Secure/);assert.match(cookie,/SameSite=Strict/);
+  const page=new Request('https://example.netlify.app/api/access',{headers:{Cookie:cookie}});
+  assert.equal(authenticated(page,serverEnv),true);
+  assert.equal(authenticated(page,serverEnv,Date.now()+31*86400000),false);
+  const forged=new Request(page.url,{headers:{Cookie:cookie.replace('spatial_access=','spatial_access=9')}});assert.equal(authenticated(forged,serverEnv),false);
+});
+test('missing backend protection fails closed even with client-provided key',async()=>{
+  let network=0;const result=await exchange(request(config),async()=>{network++;},{DASHSCOPE_API_KEY:key,DASHSCOPE_WORKSPACE_ID:config.workspace});
+  assert.equal(result.status,503);assert.equal(network,0);
 });
 test('tool writes are denied in video sessions and never auto-save in memory sessions',()=>{
   for(const mode of ['video','memory']){

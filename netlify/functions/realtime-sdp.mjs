@@ -1,16 +1,19 @@
 const MODEL = 'qwen3.8-omni-flash-realtime';
 const json = (message, status) => Response.json({detail: message}, {status, headers:{'Cache-Control':'no-store'}});
 
-export async function exchange(request, fetcher=fetch) {
+export async function exchange(request, fetcher=fetch, env=process.env) {
   if(request.method!=='POST')return json('请求方式不支持。',405);
   if(request.headers.get('origin')!==new URL(request.url).origin)return json('请从本网站发起连接。',403);
+  if(!serverReady(env))return json('管理员还没有完成后台连接配置，请稍后再试。',503);
+  if(!authenticated(request,env))return json('请先输入访问码。',401);
   let body;
   try{
     const raw=await request.text();
     if(raw.length>180000)return json('连接数据过大。',413);
     body=JSON.parse(raw);
   }catch{return json('连接配置格式不正确。',400);}
-  const {key,workspace,region,sdp}=body||{};
+  const {sdp}=body||{};
+  const key=env.DASHSCOPE_API_KEY,workspace=env.DASHSCOPE_WORKSPACE_ID,region=env.DASHSCOPE_REGION||'beijing';
   if(typeof key!=='string'||!/^sk-[\x21-\x7e]{17,509}$/.test(key)||typeof workspace!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(workspace)||!['beijing','singapore'].includes(region))return json('请检查密钥、业务空间 ID 和地域。',400);
   if(typeof sdp!=='string'||sdp.length>160000||!sdp.startsWith('v=0')||!sdp.includes('m=audio '))return json('浏览器未准备好语音连接。',400);
   const host=region==='beijing'?'cn-beijing':'ap-southeast-1';
@@ -32,4 +35,5 @@ export async function exchange(request, fetcher=fetch) {
   }catch{return json('连接千问超时或网络未通，请稍后重试。',502);}
 }
 export default request=>exchange(request);
-export const config={path:'/api/realtime/sdp',method:'POST'};
+export const config={path:'/api/realtime/sdp',method:'POST',rateLimit:{windowLimit:12,windowSize:60,aggregateBy:['ip','domain']}};
+import {authenticated,serverReady} from '../lib/access.mjs';

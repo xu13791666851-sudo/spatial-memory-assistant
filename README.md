@@ -53,7 +53,9 @@ node test_video_frontend.cjs
 
 仓库新增了适合 Netlify 的构建与连接适配。导入本仓库后，使用构建命令 `node scripts/build-netlify.mjs`、发布目录 `dist`、函数目录 `netlify/functions`。也可以直接采用 `netlify.toml` 中的配置。
 
-公网版本沿用原来的两页界面，使用浏览器 WebRTC 与千问持续通话，Netlify 函数仅负责连接时的 SDP 转发，不承接长期 WebSocket。每位访问者自己填写密钥，密钥只在当前页面内存中保留，连接时经本站函数用于千问鉴权；程序不保存或打印密钥。刷新或关闭页面后需重新填写。视频采用低帧率媒体轨道，而不是原来本地版的 JPEG WebSocket 上传；观察时间仍受页面与连接控制限制。
+公网版本沿用原来的两页界面，使用浏览器 WebRTC 与千问持续通话，Netlify 函数负责访问授权和连接时的 SDP 转发，不承接长期 WebSocket。千问密钥保存在 Netlify 后台，网页不接收密钥。首次使用输入访问码；同一浏览器通常 30 天内可直接继续使用，退出设备或更换后台密钥/访问码后需要重新验证。视频采用低帧率媒体轨道，而不是原来本地版的 JPEG WebSocket 上传；观察时间仍受页面与连接控制限制。
+
+在 Netlify 的 Environment variables 中配置 `DASHSCOPE_API_KEY`、`DASHSCOPE_WORKSPACE_ID`、`DASHSCOPE_REGION`（`beijing` 或 `singapore`）及 `APP_ACCESS_CODE`（至少 8 位）。将密钥与访问码标为 Contains secret values；不要放入源码、网页或配置文件。变更后重新部署，让函数读取最新值。缺少后台配置或访问授权时不会调用千问。访问授权使用加密签名的 HttpOnly、Secure、SameSite Cookie，浏览器刷新不会再次要求填写 API Key。
 
 物品记忆保存在当前浏览器，不与电脑 SQLite 数据库同步，也不与其他访问者共享。只有查询时才把相关记录提供给千问；保存和删除仍需确认。iPhone 使用 Safari 打开 Netlify 的 HTTPS 地址后，无须安装本地测试证书。
 
