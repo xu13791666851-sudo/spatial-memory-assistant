@@ -83,6 +83,21 @@ test('fixed key is never entered or persisted by browser and device logout clear
   assert.equal(runtime.status().configured,true);assert.ok(!JSON.stringify([...data.map]).includes(key));
   await runtime.api('/api/config',null,'DELETE');assert.equal(runtime.status().configured,false);
 });
+
+test('Qwen replay cancels an active response and queues only the supplied text',()=>{
+  const {runtime}=runtimeFixture();const bridge=new runtime.Bridge();bridge.mode='assistant';bridge.active=true;
+  const sent=[];bridge.channel={readyState:'open',send:e=>sent.push(JSON.parse(e))};
+  let aborted=false;bridge.sceneCommit={controller:{abort(){aborted=true;}}};
+  assert.equal(bridge.replayAnswer('水杯在电脑左侧。'),true);
+  assert.equal(aborted,true);assert.equal(bridge.sceneCommit,null);
+  assert.ok(sent.some(e=>e.type==='response.cancel'));
+  assert.ok(!sent.some(e=>e.type==='response.create'));
+  bridge.event({type:'response.done',response:{status:'cancelled'}},bridge.channel);
+  const message=sent.find(e=>e.type==='conversation.item.create').item.content[0].text;
+  assert.match(message,/水杯在电脑左侧/);assert.match(message,/不调用工具/);
+  assert.ok(sent.some(e=>e.type==='response.create'));
+  bridge.paused=true;assert.equal(bridge.replayAnswer('不应播报'),false);bridge.close();
+});
 test('public status never exposes backend key, workspace or access code',async()=>{
   const response=await access(new Request('https://example.netlify.app/api/access'),serverEnv);
   const text=await response.text();assert.ok(!text.includes(key));assert.ok(!text.includes(serverEnv.APP_ACCESS_CODE));assert.ok(!text.includes(config.workspace));

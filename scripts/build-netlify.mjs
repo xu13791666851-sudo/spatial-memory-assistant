@@ -3,6 +3,7 @@ import path from 'node:path';
 const root=process.cwd(),dist=path.join(root,'dist');
 await fs.mkdir(path.join(dist,'static'),{recursive:true});
 await fs.cp(path.join(root,'src/static'),path.join(dist,'static'),{recursive:true});
+await fs.copyFile(path.join(root,'web/assistant.css'),path.join(dist,'static/assistant.css'));
 await fs.copyFile(path.join(root,'web/memory.mjs'),path.join(dist,'static/memory.mjs'));
 await fs.copyFile(path.join(root,'web/runtime.mjs'),path.join(dist,'static/runtime.mjs'));
 for(const name of ['interaction','wake','stream','scene-speech'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
@@ -52,6 +53,10 @@ js=js.replace('本地程序没有准备好，请刷新或重新启动。','网�
 js=js.replace("await stop();notify('连接已结束，麦克风和摄像头已关闭。');","await stop();if($('notice').hidden)notify('连接已结束，麦克风和摄像头已关闭。');");
 js=js.replace("import {runtime} from './runtime.mjs';","import {runtime} from './runtime.mjs';\nimport {ForegroundWake} from './wake.mjs';\nimport {SceneSpeech} from './scene-speech.mjs';\nlet sceneSpeech=null,sceneText='';");
 js=js.replace('function startVoice(){','function startVoice(){\n wake.suspend();');
+js=js.replace('function speak(text){',`function speak(text){
+ if($('screen-reader-mode').checked){$('answer-live').textContent=text;return;}
+ if(!$('fast-describe').checked){void replayWithQwen(text);return;}
+`);
 js=js.replace('audioContext=new AudioContext();await audioContext.resume();','audioContext=audioContext||new AudioContext();await audioContext.resume();');
 js=js.replace("else{if(!await startMic())return;paused=false;wsSend({type:'resume'});","else{wsSend({type:'resume'});if(!await startMic())return;paused=false;");
 js=js.replace(/async function startVideo\(\)\{[\s\S]*?\r?\n\}\r?\nfunction finishVoice/,`async function startVideo(goal=""){
@@ -96,8 +101,18 @@ $('wake-toggle').onclick=async()=>{if(wake.enabled){wake.disable();$('wake-state
 };
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&wake.enabled){wake.disable();$('wake-state').textContent='离开页面后，语音唤醒已关闭。';$('wake-toggle').textContent='启用语音唤醒（前台）';}});
 window.addEventListener('pagehide',()=>wake.disable());
-try{const fast=localStorage.getItem('spatial-fast-describe');if(fast!==null)$('fast-describe').checked=fast==='true';}catch{}
-$('fast-describe').onchange=()=>{try{localStorage.setItem('spatial-fast-describe',String($('fast-describe').checked));}catch{}};
+try{const fast=localStorage.getItem('spatial-fast-describe-v2');if(fast!==null)$('fast-describe').checked=fast==='true';}catch{}
+$('fast-describe').onchange=()=>{try{localStorage.setItem('spatial-fast-describe-v2',String($('fast-describe').checked));}catch{}};
+async function replayWithQwen(text){
+ try{
+  if(paused){notify('请先恢复对话，再听一遍。');return;}
+  if(!ready){if(sessionActive()){notify('正在连接，请稍后再听一遍。');return;}if(!await startVoice())return;}
+  stopPlayback();socket?.replayAnswer(text);$('voice-state').textContent='正在请千问再读一遍。';
+ }catch{notify('重播未能完成，请重新连接后再试。');}
+}
+function applyAnswerSize(){document.documentElement.style.setProperty('--answer-size',$('answer-size').value+'px');}
+try{const size=localStorage.getItem('spatial-answer-size');if(['18','22','28'].includes(size))$('answer-size').value=size;}catch{}
+applyAnswerSize();$('answer-size').onchange=()=>{applyAnswerSize();try{localStorage.setItem('spatial-answer-size',$('answer-size').value);}catch{}};
 sceneSpeech=window.speechSynthesis?new SceneSpeech({synth:speechSynthesis,Utterance:SpeechSynthesisUtterance,
  onStart:()=>{$('voice-state').textContent='正在播报画面描述，可以打断。';},
  onDone:(token,failed)=>{socket?.finishLocalSpeech(token,failed);if(ready)$('voice-state').textContent='正在听你说话';}
@@ -110,8 +125,8 @@ function playSceneAnswer(text,token,streamed=false){
 }
 function primeSpeech(){if(!window.speechSynthesis)return;try{const primer=new SpeechSynthesisUtterance('准备好');primer.lang='zh-CN';primer.volume=0;speechSynthesis.speak(primer);}catch{}}
 `;
-await fs.writeFile(path.join(dist,'static/app.js'),js);
 let template=await fs.readFile(path.join(root,'src/static/index.html'),'utf8');
+template=template.replace('</head>','<link rel="stylesheet" href="/static/assistant.css"></head>');
 template=template.replace('密钥仅保存在本次程序运行的内存中。','密钥仅保存在当前页面内存中。建立连接时经本站 Netlify 函数用于千问鉴权；程序不保存密钥，刷新后需重新填写。');
 template=template.replace('这里是之前告诉我的位置，尚未确认现在是否仍在那里。','记录只保存在当前浏览器中，清除浏览器数据会删除；它们是历史位置，尚未确认现在是否仍在那里。');
 template=template.replace('本地程序没有准备好','网页没有准备好');
@@ -121,7 +136,7 @@ template=template.replace(/密钥仅保存在当前页面内存中。建立连�
 template=template.replace('语音、视频识别效果及手机真机仍待测试；NFC 和房间定位尚未接入。','公网版使用浏览器实时通话。实际千问连接、摄像头及 iPhone 体验仍需真机验证；NFC 和房间定位尚未接入。');
 template=template.replace('<details class="disclosure"><summary>对话记录','<audio id="remote-audio" autoplay playsinline aria-label="助手语音" hidden></audio><details class="disclosure"><summary>对话记录');
 template=template.replace('<script src="/static/video-stream.js"></script><script src="/static/app.js"></script>','<script src="/static/video-stream.js"></script><script type="module" src="/static/app.js"></script>');
-template=template.replace('<div class="preferences">','<div class="preferences"><label class="checkbox"><input id="fast-describe" type="checkbox" checked>快速播报画面描述（手机语音）</label>');
+template=template.replace('<div class="preferences">','<div class="preferences"><label for="answer-size">描述文字大小</label><select id="answer-size"><option value="18" selected>标准</option><option value="22">大字</option><option value="28">特大</option></select><label class="checkbox"><input id="fast-describe" type="checkbox">加速模式：画面描述用手机声音</label><p class="muted small">默认使用千问声音。开启加速模式可更快播报画面描述，但会切换为手机声音。结束后再听一遍会重新连接千问语音。</p>');
 template=template.replace(/<p class="intro memory-only">[\s\S]*?<\/p>\s*<p class="intro video-only">[\s\S]*?<\/p>/,'<p class="intro">看物品、记位置，需要时直接问我。</p>');
 template=template.replace(/<nav class="bottom-nav"[\s\S]*?<\/nav>/,'');
 template=template.replace('<title>{{title}} · 空间记忆</title>','<title>{{title}}</title>');
@@ -134,6 +149,18 @@ template=template.replace('<div class="more-content">','<div class="more-content
 template=template.replace('观察画面时优先口头提问；文字交流需要先连接助手。','不开启摄像头也可用文字记录和查询位置。识别画面或自由对话请先点击“开始对话”。');
 template=template.replace('删除全部记录','删除记录');
 const values={page:'assistant',title:'空间记忆助手',welcome:'开始后，我会描述眼前的环境。\n接着可以问：“水杯在哪里？”\n想再观察，说：“再看一下。”',placeholder:'例如：找水杯，或记住钥匙的位置'};
+// Keep the complete camera field above a compact, scrollable answer and two controls.
+const answerCard=template.match(/<section class="answer-card"[\s\S]*?<\/section>/)?.[0];
+if(!answerCard)throw Error('Assistant answer panel missing');
+template=template.replace(answerCard,'').replace(/<p class="intro">[\s\S]*?<\/p>/,'');
+template=template.replace('<div id="main-action"',answerCard+'\n<div id="main-action"');
+template=template.replace('id="camera-state"','id="camera-state" class="sr-only"').replace('id="voice-state" class=""','id="voice-state" class="sr-only"');
+template=template.replace('id="scene-time" class="muted small"','id="scene-time" class="sr-only"').replace('id="session-privacy" class="muted small"','id="session-privacy" class="sr-only"');
+template=template.replace(/<div class="">\s*(<p id="scene-time"[\s\S]*?<\/p>\s*<p id="camera-state"[\s\S]*?<\/p>)\s*<\/div>/,'<div class="sr-only">$1</div>');
+template=template.replace('<p>摄像头未开启</p>','<p>点击开始，查看周围</p>');
+// Show an idle placeholder in the same large camera area.
+js=js.replace("$('camera-preview').hidden=!cameraStream;","$('camera-preview').hidden=false;");
+await fs.writeFile(path.join(dist,'static/app.js'),js);
 let html=template;
 for(const [key,value]of Object.entries(values))html=html.replaceAll(`{{${key}}}`,value);
 await fs.writeFile(path.join(dist,'index.html'),html);

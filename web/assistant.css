@@ -1,0 +1,22 @@
+/* Hosted assistant: use the viewport for the complete camera field. */
+:root{--answer-size:18px}
+body[data-page=assistant] main{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto minmax(0,1fr);gap:10px;max-width:1200px;min-height:100svh;height:100svh;height:100dvh;padding:calc(10px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom))}
+body[data-page=assistant] .page-header{grid-column:1;grid-row:1;align-self:center}
+body[data-page=assistant] h1{font-size:18px;line-height:1.4}
+body[data-page=assistant] .session{grid-column:1/-1;grid-row:2;display:flex;flex-direction:column;min-width:0;min-height:0;gap:10px}
+body[data-page=assistant] .sr-only{top:0;left:0;margin:0!important}
+body[data-page=assistant] .camera-panel{flex:1;min-height:160px;display:flex}
+body[data-page=assistant] .preview{width:100%;height:100%;min-height:160px;aspect-ratio:auto;border-radius:14px;margin:0;background:#14251f}
+body[data-page=assistant] .preview video{width:100%;height:100%;position:absolute;inset:0;object-fit:contain}
+body[data-page=assistant] .preview #camera-empty{color:#e3ece6;padding:20px}
+body[data-page=assistant] .answer-card{flex:0 0 auto;display:block;min-height:0;max-height:25svh;overflow:auto;overscroll-behavior:contain;margin:0;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:12px}
+body[data-page=assistant] .answer-card p{font-size:var(--answer-size);line-height:1.45;margin:0}
+body[data-page=assistant] .main-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;flex-shrink:0}
+body[data-page=assistant] .main-button,body[data-page=assistant] .replay-button{min-height:60px;padding:12px 8px;font-size:18px;border-radius:12px;margin:0}
+body[data-page=assistant] .main-button.active:hover{background:var(--soft);color:var(--ink)}
+body[data-page=assistant] .more-tools{grid-column:2;grid-row:1;align-self:center;position:relative;margin:0;z-index:4}
+body[data-page=assistant] .more-tools>summary{min-height:44px;padding:10px 12px;font-size:15px;border-radius:10px}
+body[data-page=assistant] .more-content{position:absolute;right:0;top:100%;width:min(520px,calc(100vw - 24px));max-height:calc(100svh - 92px);overflow:auto;background:#fff;border:1px solid var(--line);box-shadow:0 12px 35px #14251f26;border-radius:14px;padding:16px}
+body[data-page=assistant] .pending{grid-column:1/-1;grid-row:2;align-self:start;z-index:3;max-height:70svh;overflow:auto}
+body[data-page=assistant] .notice{bottom:calc(82px + env(safe-area-inset-bottom))}
+@media(max-height:500px){body[data-page=assistant] main{height:auto;min-height:100svh}body[data-page=assistant] .camera-panel{min-height:55svh}}
