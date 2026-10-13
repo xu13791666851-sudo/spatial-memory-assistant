@@ -17,8 +17,8 @@ export function currentViewIntent(text){
 
 // Called after track attachment. Preview readiness alone is not a cloud acknowledgement.
 export class ObservationGate{
-  constructor({schedule=(fn,ms)=>setTimeout(fn,ms),cancel=id=>clearTimeout(id),now=()=>Date.now(),settleMs=1200,timeoutMs=8000}={}){
-    Object.assign(this,{schedule,cancel,now,settleMs,timeoutMs});this.generation=0;this.timer=null;
+  constructor({schedule=(fn,ms)=>setTimeout(fn,ms),cancel=id=>clearTimeout(id),now=()=>Date.now(),settleMs=1200,timeoutMs=8000,requireTransmission=true,pollMs=250}={}){
+    Object.assign(this,{schedule,cancel,now,settleMs,timeoutMs,requireTransmission,pollMs});this.generation=0;this.timer=null;
   }
   stop(){this.generation++;this.cancel(this.timer);this.timer=null;}
   start({preview,sender,baseline,stillCurrent,onReady,onError}){
@@ -30,7 +30,8 @@ export class ObservationGate{
       let transmitted=false;
       if(visible){
         try{
-          if(sender?.getStats){
+          if(!this.requireTransmission)transmitted=true;
+          else if(sender?.getStats){
             const stats=await sender.getStats();
             stats.forEach(r=>{if(r.type==='outbound-rtp'&&(r.kind==='video'||r.mediaType==='video')&&(r.bytesSent||0)>(baseline?.bytes||0))transmitted=true;});
           }else transmitted=true;
@@ -39,8 +40,8 @@ export class ObservationGate{
       if(generation!==this.generation||!stillCurrent())return;
       if(visible&&transmitted&&this.now()-started>=this.settleMs){this.timer=null;onReady();return;}
       if(this.now()-started>=this.timeoutMs){this.timer=null;onError('还没有收到可用的摄像头画面，请调整镜头后重新观察。');return;}
-      this.timer=this.schedule(tick,250);
+      this.timer=this.schedule(tick,this.pollMs);
     };
-    this.timer=this.schedule(tick,250);
+    this.timer=this.schedule(tick,this.pollMs);
   }
 }

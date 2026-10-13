@@ -10,6 +10,8 @@ import {ForegroundWake,wakeText} from '../web/wake.mjs';
 import {understand} from '../netlify/functions/vision.mjs';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import {readEvents} from '../web/stream.mjs';
+import {SceneSpeech} from '../web/scene-speech.mjs';
 
 const storage=()=>{const map=new Map();return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,v),map};};
 const key='sk-offline-test-only-xxxxxxxxxxxxxxxx';
@@ -74,7 +76,7 @@ function runtimeFixture(options={}){
     return Response.json({configured:true,authenticated:loggedIn,fixedKey:true});
   };
   const runtime=createRuntime({storage:data,document,fetch:fetcher,RTCPeerConnection:class{},...options});
-  return {runtime,data,preview,audio};
+  return {runtime,data,preview,audio,document};
 }
 test('fixed key is never entered or persisted by browser and device logout clears access',async()=>{
   const {runtime,data}=runtimeFixture();await runtime.loaded;await runtime.api('/api/config',{accessCode:'fixture-access-code'});
@@ -217,6 +219,37 @@ test('spoken input suppresses automatic description instead of overlapping the u
   assert.equal(sent.filter(e=>e.type==='response.create').length,0);bridge.close();
 });
 
+const fastFixture=(options={})=>{
+  const fixture=visualFixture({supportsSpeech:true,...options});const original=fixture.document.getElementById;
+  fixture.document.getElementById=id=>id==='fast-describe'?{checked:true}:original(id);return fixture;
+};
+test('fast visual speech starts at the vision result without a second model response or context acknowledgement',async()=>{
+  const {bridge,sent,events}=fastFixture();bridge.send(JSON.stringify({type:'video_start',id:'fast-view',duration:120}));await settle();bridge.scene.config.onReady();await settle();
+  const answer=events.find(e=>e.type==='app.scene_answer');assert.ok(answer);assert.match(answer.answer,/水杯/);
+  assert.equal(bridge.pendingInstructions,true);assert.equal(sent.filter(e=>e.type==='response.create').length,0);
+  bridge.finishLocalSpeech(answer.token);bridge.event({type:'session.updated'},bridge.channel);
+  assert.equal(bridge.visualPending,false);assert.equal(sent.filter(e=>e.type==='response.create').length,0);
+  bridge.send(JSON.stringify({type:'text',text:'你好'}));assert.equal(sent.filter(e=>e.type==='response.create').length,1);bridge.close();
+});
+test('late device speech callbacks cannot clear a newer visual request',async()=>{
+  const {bridge,events}=fastFixture();bridge.send(JSON.stringify({type:'video_start',id:'speech-view',duration:120}));await settle();bridge.scene.config.onReady();await settle();
+  const answer=events.find(e=>e.type==='app.scene_answer');bridge.requestCurrentView('找眼镜');bridge.finishLocalSpeech(answer.token);
+  assert.equal(bridge.visualPending,true);bridge.close();
+});
+test('failed device speech falls back to the cloud voice once',async()=>{
+  const {bridge,sent,events}=fastFixture();bridge.send(JSON.stringify({type:'video_start',id:'fallback-view',duration:120}));await settle();bridge.scene.config.onReady();await settle();
+  const answer=events.find(e=>e.type==='app.scene_answer');bridge.finishLocalSpeech(answer.token,true);bridge.event({type:'session.updated'},bridge.channel);
+  assert.equal(sent.filter(e=>e.type==='response.create').length,1);bridge.finishLocalSpeech(answer.token,true);
+  assert.equal(sent.filter(e=>e.type==='response.create').length,1);bridge.close();
+});
+
+test('readable local preview does not wait for remote video statistics',async()=>{
+  let now=0,task,ready=0;const gate=new ObservationGate({requireTransmission:false,settleMs:100,now:()=>now,schedule:fn=>(task=fn,1),cancel:()=>{}});
+  const preview={videoWidth:640,videoHeight:480,readyState:2,paused:false,srcObject:{getVideoTracks:()=>[{readyState:'live',muted:false}]}};
+  gate.start({preview,sender:{getStats:()=>assert.fail('preview snapshot must not depend on RTP')},baseline:{bytes:100},stillCurrent:()=>true,onReady:()=>ready++,onError:()=>assert.fail('unexpected timeout')});
+  now=100;await task();assert.equal(ready,1);gate.stop();
+});
+
 test('fresh observation tool waits for frames, then resumes the original question',async()=>{
   const {bridge,sent,events}=visualFixture();toolCall(bridge,'request_observation',{goal:'找水杯'},'look');
   assert.ok(events.some(e=>e.type==='app.observe'&&e.goal==='找水杯'));
@@ -337,4 +370,55 @@ test('vision errors do not expose provider credentials or fabricate a result',as
     const result=await understand(visionRequest({image:jpeg}),fetcher,serverEnv);
     assert.equal(result.status,502);assert.ok(!(await result.text()).includes(key));
   }
+});
+
+const sse=value=>'data: '+JSON.stringify(value)+'\n\n';
+test('stream parser handles split Chinese bytes and CRLF safely',async()=>{
+  const bytes=new TextEncoder().encode((sse({type:'delta',text:'电脑与水杯。'})+'data: [DONE]\n\n').replaceAll('\n','\r\n'));
+  const body=new ReadableStream({start(c){for(let i=0;i<bytes.length;i+=3)c.enqueue(bytes.slice(i,i+3));c.close();}});
+  const events=[];for await(const event of readEvents(body))events.push(event);
+  assert.deepEqual(events,[{type:'delta',text:'电脑与水杯。'}]);
+});
+
+test('vision sends its first text before the upstream response completes',async()=>{
+  let upstream;
+  const body=new ReadableStream({start(c){upstream=c;}});
+  const response=await understand(visionRequest({image:jpeg,stream:true}),async(url,options)=>{
+    const payload=JSON.parse(options.body);assert.equal(payload.stream,true);assert.equal(payload.response_format,undefined);
+    return new Response(body,{headers:{'Content-Type':'text/event-stream'}});
+  },serverEnv);
+  const iterator=readEvents(response.body);upstream.enqueue(new TextEncoder().encode(sse({choices:[{delta:{content:'桌面上有电脑。'}}]})));
+  const first=await iterator.next();assert.equal(first.value.type,'delta');assert.equal(first.value.text,'桌面上有电脑。');
+  upstream.enqueue(new TextEncoder().encode(sse({choices:[{delta:{content:'水杯在左侧。'}}]})+'data: [DONE]\n\n'));upstream.close();
+  assert.equal((await iterator.next()).value.type,'delta');const done=(await iterator.next()).value;
+  assert.equal(done.type,'done');assert.equal(done.result.answer,'桌面上有电脑。水杯在左侧。');await iterator.return();
+});
+
+test('frontend forwards partial sentences before final vision metadata and stopping releases speech suppression',async()=>{
+  let upstream;
+  const body=new ReadableStream({start(c){upstream=c;}});
+  const {bridge,events}=fastFixture({fetch:async url=>url==='/api/vision'?new Response(body,{headers:{'Content-Type':'text/event-stream'}}):Response.json({configured:true,authenticated:true})});
+  bridge.send(JSON.stringify({type:'video_start',id:'stream-view',duration:120}));await settle();bridge.scene.config.onReady();await settle();
+  upstream.enqueue(new TextEncoder().encode(sse({type:'delta',text:'水杯在电脑左侧。'})));await settle();
+  assert.ok(events.some(e=>e.type==='app.scene_delta'));assert.equal(bridge.currentScene,undefined);
+  bridge.endVideo('停止');assert.ok(events.some(e=>e.type==='app.scene_cancel'));assert.equal(bridge.visualPending,false);assert.equal(bridge.localSpeechToken,null);
+  upstream.close();bridge.close();
+});
+
+test('sentence speech starts on a complete sentence and does not repeat it at final completion',()=>{
+  class Utterance{constructor(text){this.text=text;}}
+  const spoken=[],done=[];const synth={cancel(){},speak(u){spoken.push(u);u.onstart?.();}};
+  const player=new SceneSpeech({synth,Utterance,onDone:(...args)=>done.push(args),schedule:()=>1,cancelTimer:()=>{}});
+  player.begin('one');player.append('电脑在');assert.equal(spoken.length,0);
+  player.append('中央。水杯在');assert.equal(spoken[0].text,'电脑在中央。');spoken[0].onend();assert.equal(done.length,0);
+  player.append('左侧。');assert.equal(spoken.length,2);player.finish('电脑在中央。水杯在左侧。');spoken[1].onend();
+  assert.equal(spoken.length,2);assert.deepEqual(done,[['one',false]]);
+});
+
+test('interrupting sentence speech drops its queued continuation and ignores late callbacks',()=>{
+  class Utterance{constructor(text){this.text=text;}}
+  const spoken=[],done=[];const player=new SceneSpeech({synth:{cancel(){},speak:u=>spoken.push(u)},Utterance,onDone:(...args)=>done.push(args),schedule:()=>1,cancelTimer:()=>{}});
+  player.begin('old');player.append('第一句。第二句。');const old=spoken[0];player.cancel();player.begin('new');player.append('新画面。');old.onend();
+  assert.equal(spoken.length,2);assert.deepEqual(done,[['old',false]]);player.finish('新画面。');spoken[1].onend();
+  assert.deepEqual(done,[['old',false],['new',false]]);
 });

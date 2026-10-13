@@ -1,5 +1,6 @@
 import {Memory} from './memory.mjs';
 import {ObservationGate,asksHistory,currentViewIntent} from './interaction.mjs';
+import {readEvents} from './stream.mjs';
 
 const tool=(name,description,properties={},required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
 const hasVideo=mode=>mode==='video'||mode==='assistant';
@@ -32,7 +33,7 @@ export function createRuntime(env){
     constructor(){
       this.readyState=1;this.bufferedAmount=0;this.closed=false;this.active=false;this.paused=false;this.configured=false;
       this.channels=new Set();this.calls=new Set();this.requestController=new AbortController();this.mediaGeneration=0;this.videoId=null;
-      this.scene=new (env.ObservationGate||ObservationGate)();this.lastUserText='';this.sceneGoal='';this.lastObservedAt=null;this.replyPending=false;this.listening=false;
+      this.scene=new (env.ObservationGate||ObservationGate)({requireTransmission:false,settleMs:100,pollMs:80});this.lastUserText='';this.sceneGoal='';this.lastObservedAt=null;this.replyPending=false;this.listening=false;
       this.audio=document.getElementById('remote-audio');
       queueMicrotask(()=>{if(!this.closed)this.onopen?.();});
     }
@@ -50,6 +51,7 @@ export function createRuntime(env){
       }
       if(msg.type==='pause'||msg.type==='interrupt'){
         if(msg.type==='pause')this.paused=true;
+        if(this.sceneCommit?.streaming){this.sceneCommit.controller?.abort();this.sceneCommit=null;this.localSpeechToken=null;this.visualPending=false;this.suppressResponse=false;this.emit({type:'app.scene_cancel'});}
         this.queuedReply=null;this.stopPlayback();if(this.active)this.control({type:'response.cancel'});this.control({type:'input_audio_buffer.clear'});return;
       }
       if(msg.type==='resume'){this.paused=false;return;}
@@ -85,7 +87,6 @@ export function createRuntime(env){
     async waitForScene(){
       const id=this.videoId;if(!id)return;
       const generation=this.mediaGeneration;const baseline={bytes:0};
-      try{const stats=await this.videoSender?.getStats?.();stats?.forEach(r=>{if(r.type==='outbound-rtp'&&(r.kind==='video'||r.mediaType==='video'))baseline.bytes=r.bytesSent||0;});}catch{}
       if(this.closed||this.paused||this.videoId!==id||this.mediaGeneration!==generation)return;
       this.scene.start({preview:document.getElementById('preview'),sender:this.videoSender,baseline,
         stillCurrent:()=>!this.closed&&!this.paused&&this.videoId===id,
@@ -115,20 +116,39 @@ export function createRuntime(env){
       if(this.videoId!==scene.id||this.mediaGeneration!==scene.generation){this.sceneCommit=null;return;}
       try{
         const image=this.captureScene();scene.sent=true;scene.controller=new AbortController();
-        const response=await fetcher('/api/vision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image,goal:scene.goal}),signal:scene.controller.signal});
-        const result=await response.json();if(!response.ok)throw Error(result.detail||'当前画面未能理解。');
+        const deviceSpeech=!!document.getElementById('fast-describe')?.checked&&(env.supportsSpeech||document.getElementById('screen-reader-mode')?.checked);
+        const stream=!!deviceSpeech&&!document.getElementById('screen-reader-mode')?.checked;
+        const response=await fetcher('/api/vision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image,goal:scene.goal,stream}),signal:scene.controller.signal});
+        if(!response.ok){const error=await response.json();throw Error(error.detail||'当前画面未能理解。');}
+        let result;
+        if(response.headers.get('content-type')?.includes('text/event-stream')){
+          scene.streaming=true;scene.speechToken=crypto.randomUUID();this.localSpeechToken=scene.speechToken;this.visualPending=true;this.suppressResponse=true;this.stopPlayback();
+          this.emit({type:'app.scene_begin',token:scene.speechToken});
+          for await(const event of readEvents(response.body)){
+            if(this.closed||this.paused||this.sceneCommit!==scene)return;
+            if(event.type==='delta')this.emit({type:'app.scene_delta',text:event.text,token:scene.speechToken});
+            if(event.type==='done')result=event.result;
+            if(event.type==='error')throw Error(event.detail||'当前画面的理解没有完成。');
+          }
+          if(!result)throw Error('当前画面的理解没有完成。');
+        }else result=await response.json();
         if(this.closed||this.paused||this.sceneCommit!==scene||this.videoId!==scene.id||this.mediaGeneration!==scene.generation)return;
         if(typeof result.answer!=='string'||!result.answer.trim())throw Error('当前画面未能理解。');
         this.sceneCommit=null;this.currentScene={answer:result.answer,objects:result.objects||[],observedAt:scene.observedAt,source:'current_camera_frame'};this.lastObservedAt=scene.observedAt;
         this.emit({type:'app.scene_ready',observedAt:this.lastObservedAt});
+        const useDevice=!!deviceSpeech&&!scene.localSpeechFailed;
         this.pendingInstructions=true;this.control({type:'session.update',session:{instructions:this.sceneInstructions()}});
-        this.sceneInstructionTimer=setTimeout(()=>{if(this.pendingInstructions&&!this.closed){this.pendingInstructions=false;this.queuedReply=null;this.emit({type:'app.scene_fallback',answer:result.answer});}},6000);
+        this.sceneInstructionTimer=setTimeout(()=>{if(this.pendingInstructions&&!this.closed){this.pendingInstructions=false;if(useDevice)this.flushReply();else{this.queuedReply=null;this.emit({type:'app.scene_fallback',answer:result.answer});}}},6000);
         const pending=this.observationCall;this.observationCall=null;
-        if(pending){this.toolResult(pending.id,{...this.currentScene,camera_active:true,reference:'镜头画面',is_history:false});this.requestReply();}
+        if(pending)this.toolResult(pending.id,{...this.currentScene,camera_active:true,reference:'镜头画面',is_history:false,spoken_by_device:useDevice});
+        if(useDevice&&(!this.userSpoke||pending)){
+          this.queuedReply=null;this.visualPending=true;this.suppressResponse=true;this.stopPlayback();
+          this.localSpeechToken=scene.speechToken||crypto.randomUUID();this.emit({type:'app.scene_answer',answer:result.answer,token:this.localSpeechToken,streamed:!!scene.streaming});
+        }else if(pending)this.requestReply();
         else this.requestReply('请直接语音播报应用提供的本次画面理解answer，使用简短中文，不添加识别结果之外的物体或位置。',true);
       }catch(err){
         if(this.closed||this.sceneCommit!==scene||this.videoId!==scene.id)return;
-        const message=err.message||'当前画面未能理解，请重新观察。';this.endVideo(message);this.emit({type:'app.video_error',message});
+        const message=err.message||'当前画面未能理解，请重新观察。';this.localSpeechToken=null;this.emit({type:'app.scene_cancel'});this.endVideo(message);this.emit({type:'app.video_error',message});
       }
     }
     requestObservation(goal='',callId=null){
@@ -142,10 +162,17 @@ export function createRuntime(env){
       return true;
     }
     requestCurrentView(goal){
+      this.localSpeechToken=null;
       this.visualPending=true;this.suppressResponse=true;this.userSpoke=false;this.queuedReply=null;this.heldEvents=[];this.stopPlayback();
       if(this.active)this.control({type:'response.cancel'});
       this.sceneCommit?.controller?.abort();this.sceneCommit=null;
       this.requestObservation(goal);
+    }
+    finishLocalSpeech(token,failed=false){
+      if(this.closed||this.localSpeechToken!==token)return;
+      this.localSpeechToken=null;this.visualPending=false;this.suppressResponse=false;this.updatePlayback();
+      if(failed&&this.sceneCommit?.speechToken===token){this.sceneCommit.localSpeechFailed=true;return;}
+      if(failed)this.requestReply('请直接语音播报应用提供的本次画面理解answer，使用简短中文，不添加识别结果之外的内容。');
     }
     bind(channel){
       this.channels.add(channel);
@@ -198,7 +225,10 @@ export function createRuntime(env){
         return;
       }
       if(event.type==='error'){this.emit({type:'app.error',message:'千问未能完成请求，请核对配置、权限或余额后重新开始。'});this.close();return;}
-      if(event.type==='input_audio_buffer.speech_started'){this.listening=true;this.awaitingTranscript=true;this.userSpoke=true;if(this.queuedReply?.automatic)this.queuedReply=null;}
+      if(event.type==='input_audio_buffer.speech_started'){
+        this.listening=true;this.awaitingTranscript=true;this.userSpoke=true;if(this.queuedReply?.automatic)this.queuedReply=null;
+        if(this.sceneCommit?.streaming){this.sceneCommit.controller?.abort();this.sceneCommit=null;this.localSpeechToken=null;this.visualPending=false;this.suppressResponse=false;this.emit({type:'app.scene_cancel'});}
+      }
       if(event.type==='input_audio_buffer.speech_stopped'){this.listening=false;this.replyPending=true;}
       if(event.type==='conversation.item.input_audio_transcription.completed'){
         this.lastUserText=event.transcript||'';this.awaitingTranscript=false;
@@ -263,8 +293,6 @@ export function createRuntime(env){
       const source=stream?.getVideoTracks()[0];
       if(!source||source.readyState==='ended')throw Error('Camera unavailable');
       const generation=this.mediaGeneration;
-      this.videoBaseline={bytes:0};
-      try{const stats=await this.videoSender.getStats?.();stats?.forEach(r=>{if(r.type==='outbound-rtp'&&(r.kind==='video'||r.mediaType==='video'))this.videoBaseline.bytes=r.bytesSent||0;});}catch{}
       if(this.closed||generation!==this.mediaGeneration)throw Error('Cancelled');
       const track=source.clone();this.videoTrack?.stop();this.videoTrack=track;
       await this.videoSender.replaceTrack(track);
@@ -294,6 +322,7 @@ export function createRuntime(env){
     }
     clearVideoTrack(){this.mediaGeneration++;this.videoTrack?.stop();this.videoTrack=null;this.videoSender?.replaceTrack(null).catch(()=>{});}
     endVideo(message){
+      if(this.sceneCommit?.streaming){this.localSpeechToken=null;this.visualPending=false;this.suppressResponse=false;this.emit({type:'app.scene_cancel'});}
       const id=this.videoId;this.videoId=null;clearTimeout(this.videoTimer);this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.scene.stop();this.clearVideoTrack();
       if(this.queuedReply?.automatic)this.queuedReply=null;
       if(this.observationCall){const pending=this.observationCall;this.observationCall=null;this.toolResult(pending.id,{camera_active:false,error:message});this.requestReply();}
@@ -302,7 +331,7 @@ export function createRuntime(env){
     stopPlayback(){this.audio.muted=true;}
     updatePlayback(){this.audio.muted=this.paused||this.visualPending||this.awaitingTranscript||!!document.getElementById('screen-reader-mode')?.checked;}
     close(){
-      if(this.closed)return;this.closed=true;this.readyState=3;this.requestController.abort();clearTimeout(this.sessionTimer);clearTimeout(this.videoTimer);clearTimeout(this.photoTimer);clearTimeout(this.sceneInstructionTimer);this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.pendingInstructions=false;this.scene.stop();this.queuedReply=null;this.observationCall=null;this.clearVideoTrack();
+      if(this.closed)return;this.closed=true;this.localSpeechToken=null;this.readyState=3;this.requestController.abort();clearTimeout(this.sessionTimer);clearTimeout(this.videoTimer);clearTimeout(this.photoTimer);clearTimeout(this.sceneInstructionTimer);this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.pendingInstructions=false;this.scene.stop();this.queuedReply=null;this.observationCall=null;this.clearVideoTrack();
       for(const c of this.channels){try{c.close();}catch{}}
       this.pc?.close();this.audio.pause();this.audio.srcObject=null;this.audio.hidden=true;
       queueMicrotask(()=>this.onclose?.());
@@ -322,5 +351,5 @@ export function createRuntime(env){
     }};
 }
 
-export const runtime=typeof window==='undefined'?null:createRuntime({storage:window.localStorage,document:window.document,fetch:window.fetch.bind(window),RTCPeerConnection:window.RTCPeerConnection,createImageBitmap:window.createImageBitmap?.bind(window)});
+export const runtime=typeof window==='undefined'?null:createRuntime({storage:window.localStorage,document:window.document,fetch:window.fetch.bind(window),RTCPeerConnection:window.RTCPeerConnection,createImageBitmap:window.createImageBitmap?.bind(window),supportsSpeech:!!window.speechSynthesis});
 if(typeof window!=='undefined')window.spatialRuntime=runtime;
