@@ -5,10 +5,11 @@ await fs.mkdir(path.join(dist,'static'),{recursive:true});
 await fs.cp(path.join(root,'src/static'),path.join(dist,'static'),{recursive:true});
 await fs.copyFile(path.join(root,'web/memory.mjs'),path.join(dist,'static/memory.mjs'));
 await fs.copyFile(path.join(root,'web/runtime.mjs'),path.join(dist,'static/runtime.mjs'));
+for(const name of ['interaction','wake'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
 let js=await fs.readFile(path.join(root,'src/static/app.js'),'utf8');
 js=js.replace("const PAGE=document.body.dataset.page;","import {runtime} from './runtime.mjs';\nlet PAGE=document.body.dataset.page;\nawait runtime.loaded;");
 js=js.replace("const res=await fetch(path,", "if(window.spatialRuntime)return window.spatialRuntime.api(path,body,method);\n const res=await fetch(path,");
-js=js.replace(/async function startMic\(\)\{[^\n]*\}\r?\nfunction cameraUI/,"async function startMic(){const generation=++micGeneration;const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});if(generation!==micGeneration||!socket||!ready){stream.getTracks().forEach(t=>t.stop());return false;}micStream=stream;await socket.attachAudio(stream);return true;}\nfunction cameraUI");
+js=js.replace(/async function startMic\(\)\{[^\n]*\}\r?\nfunction cameraUI/,"async function startMic(){const generation=++micGeneration;const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});if(generation!==micGeneration||!socket||!ready){stream.getTracks().forEach(t=>t.stop());return false;}micStream=stream;await socket.attachAudio(stream);return generation===micGeneration&&!!socket&&ready;}\nfunction cameraUI");
 js=js.replace("await audioContext.audioWorklet.addModule('/static/recorder.js');",'');
 js=js.replace("function stopPlayback(){", "function stopPlayback(){socket?.stopPlayback?.();");
 js=js.replace("socket=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws/realtime`);", "socket=new window.spatialRuntime.Bridge();");
@@ -48,6 +49,35 @@ js=js.replace("if(PAGE==='memory')await refresh();",'await refresh();');
 js=js.replaceAll("(PAGE==='memory'?'文字记忆可用':'连接尚未设置')","'文字记忆可用'");
 js=js.replace("delete:'删除全部记录'","delete:'删除这件物品的记录'");
 js=js.replace('本地程序没有准备好，请刷新或重新启动。','网页没有准备好，请刷新后重试。');
+js=js.replace("await stop();notify('连接已结束，麦克风和摄像头已关闭。');","await stop();if($('notice').hidden)notify('连接已结束，麦克风和摄像头已关闭。');");
+js=js.replace("import {runtime} from './runtime.mjs';","import {runtime} from './runtime.mjs';\nimport {ForegroundWake} from './wake.mjs';");
+js=js.replace('function startVoice(){','function startVoice(){\n wake.suspend();');
+js=js.replace('audioContext=new AudioContext();await audioContext.resume();','audioContext=audioContext||new AudioContext();await audioContext.resume();');
+js=js.replace('async function startVideo(){','async function startVideo(goal=""){');
+js=js.replace("wsSend({type:'video_start',id,duration});","wsSend({type:'video_start',id,duration,goal});");
+js=js.replace('cameraStream=stream;$(\'preview\').srcObject=stream;$(\'preview\').style.display=\'block\';$(\'camera-empty\').hidden=true;',`cameraStream=stream;$('preview').muted=true;$('preview').playsInline=true;$('preview').srcObject=stream;$('preview').style.display='block';$('camera-empty').hidden=true;cameraUI();await $('preview').play();if(generation!==cameraGeneration)return false;`);
+js=js.replace("stateUI('对话已结束，麦克风已关闭。');}","stateUI('对话已结束，麦克风已关闭。');if(wake.enabled&&!document.hidden)setTimeout(()=>{if(!sessionActive()&&!document.hidden)wake.resume();},600);}");
+js=js.replace("case 'app.memory':",`case 'app.observe':if(!paused&&!videoId&&!videoOpening)await startVideo(event.goal);break;
+ case 'app.scene_fallback':localAnswer(event.answer);if(!$('screen-reader-mode').checked&&!$('read-aloud').checked)speak(event.answer);break;
+ case 'app.scene_ready':$('camera-state').textContent='画面已准备好，正在描述。你可以接着问物品的位置。';$('scene-time').textContent='本次画面时间：'+new Date(event.observedAt).toLocaleTimeString('zh-CN');break;
+ case 'app.memory':`);
+js=js.replace("if(event.transcript){bubble(event.transcript,true);","if(event.transcript){bubble(event.transcript,true);if(/^(结束对话|退出对话)[。！!\\s]*$/.test(event.transcript.trim())){await stop();break;}");
+js=js.replace("case 'app.video_started':{","case 'app.video_started':{");
+js=js.replace('视频观察已开启，${event.duration} 秒后自动关闭摄像头。可以边看边说。','视频观察已开启，正在准备环境描述。${event.duration} 秒后关闭摄像头，语音继续。');
+js+=`\nconst wake=new ForegroundWake({Recognition:window.SpeechRecognition||window.webkitSpeechRecognition,isVisible:()=>!document.hidden,
+ onState:message=>{$('wake-state').textContent=message;$('wake-toggle').textContent=wake.enabled?'关闭语音唤醒':'启用语音唤醒（前台）';if(!sessionActive())$('voice-state').textContent=message;},
+ onWake:async({goal})=>{try{await new Promise(resolve=>setTimeout(resolve,350));if(!document.hidden)await startVideo(goal);}catch{notify('唤醒后未能开启，请点击“开始对话”。');}}
+});
+$('clear-config').addEventListener('click',()=>{wake.disable();$('wake-state').textContent='访问已退出，语音唤醒已关闭。';$('wake-toggle').textContent='启用语音唤醒（前台）';});
+$('wake-toggle').onclick=async()=>{if(wake.enabled){wake.disable();$('wake-state').textContent='语音唤醒已关闭。';$('wake-toggle').textContent='启用语音唤醒（前台）';if(!sessionActive())$('voice-state').textContent='';return;}
+ if(sessionActive()){notify('请先结束对话，再启用唤醒待机。');return;}
+ if(!configured){openSettings($('wake-toggle'));notify('请先输入访问码连接，再启用唤醒。');return;}
+ if(wake.supported){try{audioContext=audioContext||new AudioContext();await audioContext.resume();}catch{}}
+ wake.enable();
+};
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&wake.enabled){wake.disable();$('wake-state').textContent='离开页面后，语音唤醒已关闭。';$('wake-toggle').textContent='启用语音唤醒（前台）';}});
+window.addEventListener('pagehide',()=>wake.disable());
+`;
 await fs.writeFile(path.join(dist,'static/app.js'),js);
 let template=await fs.readFile(path.join(root,'src/static/index.html'),'utf8');
 template=template.replace('密钥仅保存在本次程序运行的内存中。','密钥仅保存在当前页面内存中。建立连接时经本站 Netlify 函数用于千问鉴权；程序不保存密钥，刷新后需重新填写。');
@@ -65,9 +95,11 @@ template=template.replace('<title>{{title}} · 空间记忆</title>','<title>{{t
 template=template.replace(/\b(memory-only|video-only)\b/g,'');
 template=template.replace('点击开始后，可以边看边说。','').replace('点击开始后，直接说话就可以。','');
 template=template.replace(/<p id="session-privacy"[\s\S]*?<\/p>/,'<p id="session-privacy" class="muted small">开始后开启语音和摄像头。画面默认观察 30 秒，随后语音继续；保存位置需要确认。</p>');
+template=template.replace('<p id="camera-state"','<p id="scene-time" class="muted small" aria-live="off"></p><p id="camera-state"');
+template=template.replace('<div class="more-content">','<div class="more-content"><details class="disclosure"><summary>语音唤醒入口</summary><button id="wake-toggle" class="full-width" type="button">启用语音唤醒（前台）</button><p id="wake-state" role="status">先启用，再说“小忆”开始观察。</p><p class="muted small">仅在网页保持打开时工作。浏览器语音识别可能使用系统或在线服务；待机不连接千问。结束对话后回到唤醒待机，关闭唤醒才停止待机监听。锁屏或离开页面会关闭唤醒。不支持时可直接点击“开始对话”。</p></details>');
 template=template.replace('观察画面时优先口头提问；文字交流需要先连接助手。','不开启摄像头也可用文字记录和查询位置。识别画面或自由对话请先点击“开始对话”。');
 template=template.replace('删除全部记录','删除记录');
-const values={page:'assistant',title:'空间记忆助手',welcome:'你可以问：“这是什么？”、“钥匙在哪？”\n也可以说：“记住，钥匙放在抽屉里。”',placeholder:'例如：记住，钥匙放在抽屉里'};
+const values={page:'assistant',title:'空间记忆助手',welcome:'开始后，我会描述眼前的环境。\n接着可以问：“水杯在哪里？”\n想再观察，说：“再看一下。”',placeholder:'例如：找水杯，或记住钥匙的位置'};
 let html=template;
 for(const [key,value]of Object.entries(values))html=html.replaceAll(`{{${key}}}`,value);
 await fs.writeFile(path.join(dist,'index.html'),html);
