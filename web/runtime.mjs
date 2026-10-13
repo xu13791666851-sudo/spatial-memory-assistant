@@ -54,7 +54,7 @@ export function createRuntime(env){
       }
       if(msg.type==='resume'){this.paused=false;return;}
       if(msg.type==='video_start'&&hasVideo(this.mode)&&!this.paused){
-        if(![10,30,60].includes(msg.duration)||this.videoId)return;
+        if(![10,30,60,120,300].includes(msg.duration)||this.videoId)return;
         this.videoId=msg.id;this.deadline=Date.now()+msg.duration*1000;this.frames=0;this.sceneGoal=this.observationCall?.goal||String(msg.goal||'').slice(0,300);this.userSpoke=false;
         this.videoTimer=setTimeout(()=>this.endVideo('已到观察时长，摄像头已关闭。语音可以继续。'),msg.duration*1000);
         this.attachVideo().then(()=>{if(this.videoId===msg.id){this.emit({type:'app.video_started',id:msg.id,duration:msg.duration});this.waitForScene();}}).catch(()=>{this.endVideo('视频通话未能开启。');this.emit({type:'app.camera_close'});});return;

@@ -8,6 +8,8 @@ import {issueSession,authenticated,sessionCookie} from '../netlify/lib/access.mj
 import {ObservationGate,observationCommand,asksHistory,currentViewIntent} from '../web/interaction.mjs';
 import {ForegroundWake,wakeText} from '../web/wake.mjs';
 import {understand} from '../netlify/functions/vision.mjs';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
 
 const storage=()=>{const map=new Map();return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,v),map};};
 const key='sk-offline-test-only-xxxxxxxxxxxxxxxx';
@@ -171,6 +173,28 @@ const visualFixture=(options={})=>{
 };
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 const toolCall=(bridge,name,args,id)=>bridge.event({type:'response.done',response:{output:[{type:'function_call',call_id:id,name,arguments:JSON.stringify(args)}]}},bridge.channel);
+
+test('two and five minute observations are accepted and preserve manual stop',async()=>{
+  for(const duration of [120,300]){
+    const {bridge}=visualFixture();bridge.send(JSON.stringify({type:'video_start',id:'long-view',duration}));await settle();
+    assert.equal(bridge.videoId,'long-view');bridge.send(JSON.stringify({type:'video_stop',id:'long-view'}));
+    assert.equal(bridge.videoId,null);assert.equal(bridge.closed,false);bridge.close();
+  }
+});
+
+test('long frame timers continue past 30 seconds and stop exactly at their configured deadline',()=>{
+  for(const duration of [120,300]){
+    let now=0,nextId=0,stops=0,frames=0;const tasks=new Map();
+    const add=(fn,delay,interval=0)=>{const id=++nextId;tasks.set(id,{fn,at:now+delay,interval});return id;};
+    const context={module:{exports:{}},performance:{now:()=>now},setTimeout:(fn,ms)=>add(fn,ms),clearTimeout:id=>tasks.delete(id),setInterval:(fn,ms)=>add(fn,ms,ms),clearInterval:id=>tasks.delete(id)};
+    vm.runInNewContext(readFileSync(new URL('../src/static/video-stream.js',import.meta.url),'utf8'),context);
+    const stream=new context.module.exports.FrameStream();stream.start(duration,()=>{frames++;return true;},()=>stops++);
+    const advance=target=>{while(true){const due=[...tasks].filter(([,t])=>t.at<=target).sort((a,b)=>a[1].at-b[1].at)[0];if(!due)break;const [id,t]=due;now=t.at;if(t.interval)t.at+=t.interval;else tasks.delete(id);t.fn();}now=target;};
+    advance(30001);assert.equal(stream.running,true);assert.equal(stops,0);
+    advance(duration*1000-1);assert.equal(stream.running,true);assert.equal(stops,0);
+    advance(duration*1000);assert.equal(stream.running,false);assert.equal(stops,1);assert.equal(frames,duration);assert.equal(tasks.size,0);
+  }
+});
 
 test('automatic scene description starts only after usable frames, once per observation',async()=>{
   const {bridge,sent}=visualFixture();

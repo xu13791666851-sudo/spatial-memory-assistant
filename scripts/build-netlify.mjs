@@ -63,7 +63,7 @@ js=js.replace("case 'app.memory':",`case 'app.observe':if(!paused&&!videoId&&!vi
  case 'app.memory':`);
 js=js.replace("if(event.transcript){bubble(event.transcript,true);","if(event.transcript){bubble(event.transcript,true);if(/^(结束对话|退出对话)[。！!\\s]*$/.test(event.transcript.trim())){await stop();break;}");
 js=js.replace("case 'app.video_started':{","case 'app.video_started':{");
-js=js.replace('视频观察已开启，${event.duration} 秒后自动关闭摄像头。可以边看边说。','视频观察已开启，正在准备环境描述。${event.duration} 秒后关闭摄像头，语音继续。');
+js=js.replace('视频观察已开启，${event.duration} 秒后自动关闭摄像头。可以边看边说。',"视频观察已开启，正在准备环境描述。${event.duration>=60?event.duration/60+' 分钟':event.duration+' 秒'}后关闭摄像头，语音继续。");
 js+=`\nconst wake=new ForegroundWake({Recognition:window.SpeechRecognition||window.webkitSpeechRecognition,isVisible:()=>!document.hidden,
  onState:message=>{$('wake-state').textContent=message;$('wake-toggle').textContent=wake.enabled?'关闭语音唤醒':'启用语音唤醒（前台）';if(!sessionActive())$('voice-state').textContent=message;},
  onWake:async({goal})=>{try{await new Promise(resolve=>setTimeout(resolve,350));if(!document.hidden)await startVideo(goal);}catch{notify('唤醒后未能开启，请点击“开始对话”。');}}
@@ -94,7 +94,8 @@ template=template.replace(/<nav class="bottom-nav"[\s\S]*?<\/nav>/,'');
 template=template.replace('<title>{{title}} · 空间记忆</title>','<title>{{title}}</title>');
 template=template.replace(/\b(memory-only|video-only)\b/g,'');
 template=template.replace('点击开始后，可以边看边说。','').replace('点击开始后，直接说话就可以。','');
-template=template.replace(/<p id="session-privacy"[\s\S]*?<\/p>/,'<p id="session-privacy" class="muted small">开始后开启语音和摄像头。画面默认观察 30 秒，随后语音继续；保存位置需要确认。</p>');
+template=template.replace(/<p id="session-privacy"[\s\S]*?<\/p>/,'<p id="session-privacy" class="muted small">开始后开启语音和摄像头。画面默认观察 2 分钟，随后语音继续；说“停止观察”可提前关闭摄像头。</p>');
+template=template.replace(/<select id="video-duration">[\s\S]*?<\/select>/,'<select id="video-duration"><option value="60">1 分钟</option><option value="120" selected>2 分钟</option><option value="300">5 分钟</option></select>');
 template=template.replace('<p id="camera-state"','<p id="scene-time" class="muted small" aria-live="off"></p><p id="camera-state"');
 template=template.replace('<div class="more-content">','<div class="more-content"><details class="disclosure"><summary>语音唤醒入口</summary><button id="wake-toggle" class="full-width" type="button">启用语音唤醒（前台）</button><p id="wake-state" role="status">先启用，再说“小忆”开始观察。</p><p class="muted small">仅在网页保持打开时工作。浏览器语音识别可能使用系统或在线服务；待机不连接千问。结束对话后回到唤醒待机，关闭唤醒才停止待机监听。锁屏或离开页面会关闭唤醒。不支持时可直接点击“开始对话”。</p></details>');
 template=template.replace('观察画面时优先口头提问；文字交流需要先连接助手。','不开启摄像头也可用文字记录和查询位置。识别画面或自由对话请先点击“开始对话”。');
