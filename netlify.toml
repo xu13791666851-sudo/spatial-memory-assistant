@@ -6,6 +6,9 @@
 [build.environment]
   NODE_VERSION = "22"
   PYTHON_VERSION = "3.11"
+  # The provider region is a public routing label, not a credential.
+  # Keep API key and access-code scanning enabled.
+  SECRETS_SCAN_OMIT_KEYS = "DASHSCOPE_REGION"
 
 [[headers]]
   for = "/*"
