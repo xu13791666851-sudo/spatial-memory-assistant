@@ -1,5 +1,6 @@
 import {authenticated,serverReady} from '../lib/access.mjs';
 import {readEvents} from '../../web/stream.mjs';
+import {PERSON_CONTEXT_RULES} from '../../web/person-context.mjs';
 const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'no-store'}});
 export async function understand(request,fetcher=fetch,env=process.env){
   if(request.method!=='POST')return reply({detail:'请求方式不支持。'},405);
@@ -17,7 +18,7 @@ export async function understand(request,fetcher=fetch,env=process.env){
   try{
     const response=await fetcher(`https://${workspace}.${region==='beijing'?'cn-beijing':'ap-southeast-1'}.maas.aliyuncs.com/compatible-mode/v1/chat/completions`,{
       method:'POST',redirect:'error',signal,headers:{Authorization:'Bearer '+env.DASHSCOPE_API_KEY,'Content-Type':'application/json'},
-      body:JSON.stringify({model:'qwen3.6-flash',enable_thinking:false,max_tokens:400,temperature:0.2,...(stream?{stream:true}:{response_format:{type:'json_object'}}),messages:[{role:'system',content:system},{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+image}},{type:'text',text:goal?'请看当前图片，回答：'+goal:'请概括当前环境及主要物品之间的位置关系。'}]}]})
+      body:JSON.stringify({model:'qwen3.6-flash',enable_thinking:false,max_tokens:400,temperature:0.2,...(stream?{stream:true}:{response_format:{type:'json_object'}}),messages:[{role:'system',content:system+PERSON_CONTEXT_RULES},{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+image}},{type:'text',text:goal?'请看当前图片，回答：'+goal:'请概括当前环境及主要物品之间的位置关系。'}]}]})
     });
     if(!response.ok)return reply({detail:response.status===401||response.status===403?'视觉理解未获授权，请检查后台模型权限。':'视觉理解暂未完成，请稍后重新观察。'},502);
     if(stream){
