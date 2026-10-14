@@ -85,6 +85,7 @@ js=js.replace("case 'app.memory':",`case 'app.observe':if(!paused&&!videoId&&!vi
  case 'app.scene_fallback':localAnswer(event.answer);if(!$('screen-reader-mode').checked&&!$('read-aloud').checked)speak(event.answer);break;
  case 'app.scene_ready':$('camera-state').textContent='画面已准备好，正在描述。你可以接着问物品的位置。';$('scene-time').textContent='本次画面时间：'+new Date(event.observedAt).toLocaleTimeString('zh-CN');break;
  case 'app.place_changed':syncPlace(event.place);renderPending(null);localAnswer(event.answer);break;
+ case 'app.memory_result':renderMemories(event.items);renderPending(event.pending);localAnswer(event.answer);if(!$('read-aloud').checked&&!$('screen-reader-mode').checked)speak(event.answer);break;
  case 'app.memory':`);
 js=js.replace("if(event.transcript){bubble(event.transcript,true);","if(event.transcript){bubble(event.transcript,true);if(/^(结束对话|退出对话)[。！!\\s]*$/.test(event.transcript.trim())){await stop();break;}");
 js=js.replace("case 'app.video_started':{","case 'app.video_started':{");
@@ -177,4 +178,4 @@ for(const alias of ['video','memory']){
 await fs.writeFile(path.join(dist,'_redirects'),'/memory /video/ 301!\n/ /video/ 302!\n');
 await fs.appendFile(path.join(dist,'static/style.css'),'\nbody[data-page=assistant] main{padding-bottom:calc(32px + env(safe-area-inset-bottom))}body[data-page=assistant] .notice{bottom:calc(20px + env(safe-area-inset-bottom))}body[data-page=assistant] .session p[role=status]:empty{display:none}\n');
 await fs.appendFile(path.join(dist,'static/style.css'),'.place-control{margin:12px 0 18px}.place-control label{display:block;font-weight:700;margin-bottom:6px}.place-control select{width:100%;min-height:48px}.place-control p{margin:6px 0 0}\n');
-console.log('Netlify build ready: one assistant page with vision, voice and confirmed memory.');
+console.log('Netlify build ready: one assistant page with vision, voice and explicit memory commands.');

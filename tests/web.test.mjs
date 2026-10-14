@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Memory} from '../web/memory.mjs';
+import {Memory,rememberCommand} from '../web/memory.mjs';
 import {SessionContext,placeIntent} from '../web/context.mjs';
 import {createRuntime,sessionConfig} from '../web/runtime.mjs';
 import {exchange} from '../netlify/functions/realtime-sdp.mjs';
@@ -29,6 +29,22 @@ test('memory is pending until confirmation and survives a new instance',()=>{
   assert.equal(next.get('钥匙').location,'玄关桌上');
   assert.equal(next.get('钥匙').place,'home');
   assert.match(next.answer('钥匙'),/还没有确认现在的位置/);
+});
+test('explicit remember command saves immediately, replaces the latest location and survives reload',()=>{
+  const data=storage(),m=new Memory(data);
+  assert.equal(rememberCommand('钥匙放在玄关桌上'),null);
+  assert.equal(rememberCommand('我说记住，钥匙放在玄关桌上'),null);
+  const first=m.command('记住，钥匙放在玄关桌上。');
+  assert.equal(first.saved,true);assert.equal(first.pending,null);
+  assert.equal(new Memory(data).get('钥匙').location,'玄关桌上');
+  m.command('小忆，记住，钥匙放在抽屉里');
+  assert.equal(new Memory(data).get('钥匙').location,'抽屉里');
+  assert.equal(new Memory(data).all().length,1);
+});
+test('failed direct save never reports success',()=>{
+  const m=new Memory({getItem:()=>null,setItem:()=>{throw Error('quota');}});
+  assert.throws(()=>m.command('记住，钥匙放在玄关桌上'));
+  assert.equal(m.get('钥匙'),null);
 });
 test('failed storage is not reported as saved and retains confirmation',()=>{
   const m=new Memory({getItem:()=>null,setItem:()=>{throw Error('quota');}});
@@ -191,6 +207,33 @@ test('ordinary scenes cannot expose or change home records',()=>{
   bridge.event({type:'response.done',response:{output:[{type:'function_call',call_id:'read',name:'query_memory',arguments:'{"name":"钥匙"}'}]}},bridge.channel);
   assert.equal(JSON.parse(sent.find(e=>e.item?.call_id==='read').item.output).record,undefined);
   bridge.close();
+});
+test('remember command works for typed and spoken input only in home scene',()=>{
+  const {runtime}=runtimeFixture();const bridge=new runtime.Bridge();bridge.mode='assistant';
+  const events=[],sent=[];bridge.onmessage=e=>events.push(JSON.parse(e.data));
+  bridge.channel={readyState:'open',send:e=>sent.push(JSON.parse(e))};
+  bridge.send(JSON.stringify({type:'text',text:'记住，钥匙放在玄关桌上'}));
+  assert.equal(runtime.memory.get('钥匙'),null);
+  assert.equal(events.at(-1).saved,false);
+  runtime.setPlace('home');
+  bridge.send(JSON.stringify({type:'text',text:'记住，钥匙放在玄关桌上'}));
+  assert.equal(runtime.memory.get('钥匙').location,'玄关桌上');
+  assert.equal(runtime.memory.pending,null);
+  assert.equal(events.at(-1).saved,true);
+  bridge.event({type:'conversation.item.input_audio_transcription.completed',transcript:'记住，钥匙放在抽屉里'},bridge.channel);
+  assert.equal(runtime.memory.get('钥匙').location,'抽屉里');
+  assert.equal(events.at(-1).saved,true);
+  assert.ok(sent.some(e=>e.type==='response.cancel'));
+  bridge.close();
+});
+test('offline text command saves in home without a pending confirmation',async()=>{
+  const {runtime}=runtimeFixture();
+  const outside=await runtime.api('/api/command',{text:'记住，眼镜放在床头柜上'});
+  assert.equal(outside.items.length,0);assert.equal(runtime.memory.get('眼镜'),null);
+  runtime.setPlace('home');
+  const saved=await runtime.api('/api/command',{text:'记住，眼镜放在床头柜上'});
+  assert.equal(saved.saved,true);assert.equal(saved.pending,null);
+  assert.equal(runtime.memory.get('眼镜').location,'床头柜上');
 });
 
 test('combined session supports native video without stopping the original preview track',async()=>{
