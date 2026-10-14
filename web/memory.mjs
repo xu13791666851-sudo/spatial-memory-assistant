@@ -11,11 +11,11 @@ export class Memory {
   rows(){
     const raw=JSON.parse(this.storage.getItem(this.key)||'[]');
     if(!Array.isArray(raw))throw Error('本机记录无法读取，请先检查浏览器数据。');
-    return raw.filter(r=>r&&typeof r.name==='string'&&typeof r.location==='string'&&typeof r.recorded_at==='string'&&r.source==='MANUAL'&&r.state==='HISTORICAL');
+    return raw.filter(r=>r&&typeof r.name==='string'&&typeof r.location==='string'&&typeof r.recorded_at==='string'&&r.source==='MANUAL'&&r.state==='HISTORICAL'&&(!r.place||r.place==='home'));
   }
   all(){const map=new Map();for(const r of this.rows())map.set(r.name,r);return [...map.values()].reverse();}
   get(name){return this.all().find(r=>r.name===name)||null;}
-  answer(name){const r=this.get(name);return r?`你之前提供的记录：${name}在${r.location}，放置时间为“${r.event_time}”，记录于${new Date(r.recorded_at).toLocaleString('zh-CN')}。还没有确认现在的位置。`:`没有找到${name}的位置记录。`;}
+  answer(name){const r=this.get(name);return r?`你之前提供的家中记录：${name}在${r.location}，放置时间为“${r.event_time}”，记录于${new Date(r.recorded_at).toLocaleString('zh-CN')}。还没有确认现在的位置。`:`没有找到${name}的家中位置记录。`;}
   prepare({action,name,location='',event_time='时间未说明'}){
     if(!['record','move','correct','delete'].includes(action))throw Error('不支持这个操作。');
     name=clean(name,40);if(action!=='delete')location=clean(location);event_time=clean(event_time,80);
@@ -28,7 +28,7 @@ export class Memory {
     if(!p||p.token!==token||p.expires<=this.clock()){this.pending=null;throw Error('待确认操作已失效，请重新说明。');}
     if(cancel){this.pending=null;return this.result('已取消。');}
     const rows=this.rows();const old=this.get(p.name);
-    const next=p.action==='delete'?rows.filter(r=>r.name!==p.name):[...rows,{id:this.uuid(),name:p.name,location:p.location,event_time:p.action==='correct'?old.event_time:p.event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'}];
+    const next=p.action==='delete'?rows.filter(r=>r.name!==p.name):[...rows,{id:this.uuid(),place:'home',name:p.name,location:p.location,event_time:p.action==='correct'?old.event_time:p.event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'}];
     this.storage.setItem(this.key,JSON.stringify(next));
     this.pending=null;return this.result(p.action==='delete'?'已删除这件物品的本机记录。':'已保存你提供的位置，尚未确认现在的位置。');
   }

@@ -2,7 +2,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
-const {FrameStream} = require('./static/video-stream.js');
+// The app is an ES module package, so load this browser script in a CommonJS-shaped VM context.
+const streamSource=fs.readFileSync(path.join(__dirname,'static/video-stream.js'),'utf8');
+const streamContext={module:{exports:{}}};
+vm.runInNewContext(streamSource,streamContext);
+const {FrameStream}=streamContext.module.exports;
 
 class Clock {
  constructor(){this.time=0;this.serial=0;this.timers=new Map();}

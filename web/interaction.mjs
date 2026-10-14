@@ -11,7 +11,7 @@ export function observationCommand(text){
 export function currentViewIntent(text){
   text=String(text||'').trim();if(asksHistory(text))return null;
   const command=observationCommand(text);if(command)return command;
-  if(/(在哪里|在哪儿|在哪|哪边|哪一边|什么位置|相对位置|具体位置|这是什么|这.{0,12}是什么|有什么|看到了什么|描述.{0,5}(环境|画面))/.test(text))return {goal:text};
+  if(/(在哪里|在哪儿|在哪|哪边|哪一边|什么位置|相对位置|具体位置|这是什么|这.{0,12}是什么|旁边是什么|有什么|看到了什么|描述.{0,5}(环境|画面))/.test(text))return {goal:text};
   return null;
 }
 
