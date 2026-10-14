@@ -6,7 +6,7 @@ await fs.cp(path.join(root,'src/static'),path.join(dist,'static'),{recursive:tru
 await fs.copyFile(path.join(root,'web/assistant.css'),path.join(dist,'static/assistant.css'));
 await fs.copyFile(path.join(root,'web/memory.mjs'),path.join(dist,'static/memory.mjs'));
 await fs.copyFile(path.join(root,'web/runtime.mjs'),path.join(dist,'static/runtime.mjs'));
-for(const name of ['interaction','wake','stream','scene-speech'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
+for(const name of ['interaction','wake','context','stream','scene-speech'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
 let js=await fs.readFile(path.join(root,'src/static/app.js'),'utf8');
 js=js.replace("const PAGE=document.body.dataset.page;","import {runtime} from './runtime.mjs';\nlet PAGE=document.body.dataset.page;\nawait runtime.loaded;");
 js=js.replace("const res=await fetch(path,", "if(window.spatialRuntime)return window.spatialRuntime.api(path,body,method);\n const res=await fetch(path,");
@@ -84,6 +84,8 @@ js=js.replace("case 'app.memory':",`case 'app.observe':if(!paused&&!videoId&&!vi
  case 'app.scene_answer':playSceneAnswer(event.answer,event.token,event.streamed);break;
  case 'app.scene_fallback':localAnswer(event.answer);if(!$('screen-reader-mode').checked&&!$('read-aloud').checked)speak(event.answer);break;
  case 'app.scene_ready':$('camera-state').textContent='画面已准备好，正在描述。你可以接着问物品的位置。';$('scene-time').textContent='本次画面时间：'+new Date(event.observedAt).toLocaleTimeString('zh-CN');break;
+ case 'app.place_changed':syncPlace(event.place);renderPending(null);localAnswer(event.answer);break;
+ case 'app.memory_result':renderMemories(event.items);renderPending(event.pending);localAnswer(event.answer);if(!$('read-aloud').checked&&!$('screen-reader-mode').checked)speak(event.answer);break;
  case 'app.memory':`);
 js=js.replace("if(event.transcript){bubble(event.transcript,true);","if(event.transcript){bubble(event.transcript,true);if(/^(结束对话|退出对话)[。！!\\s]*$/.test(event.transcript.trim())){await stop();break;}");
 js=js.replace("case 'app.video_started':{","case 'app.video_started':{");
@@ -101,6 +103,9 @@ $('wake-toggle').onclick=async()=>{if(wake.enabled){wake.disable();$('wake-state
 };
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&wake.enabled){wake.disable();$('wake-state').textContent='离开页面后，语音唤醒已关闭。';$('wake-toggle').textContent='启用语音唤醒（前台）';}});
 window.addEventListener('pagehide',()=>wake.disable());
+function syncPlace(place){$('place-mode').value=place;$('home-memory-section').hidden=place!=='home';}
+syncPlace(runtime.place());
+$('place-mode').onchange=()=>{try{const result=runtime.setPlace($('place-mode').value);syncPlace(result.place);if(!socket)localAnswer(result.answer);}catch(err){notify(err.message);syncPlace(runtime.place());}};
 try{const fast=localStorage.getItem('spatial-fast-describe-v2');if(fast!==null)$('fast-describe').checked=fast==='true';}catch{}
 $('fast-describe').onchange=()=>{try{localStorage.setItem('spatial-fast-describe-v2',String($('fast-describe').checked));}catch{}};
 async function replayWithQwen(text){
@@ -138,6 +143,8 @@ template=template.replace('<details class="disclosure"><summary>对话记录','<
 template=template.replace('<script src="/static/video-stream.js"></script><script src="/static/app.js"></script>','<script src="/static/video-stream.js"></script><script type="module" src="/static/app.js"></script>');
 template=template.replace('<div class="preferences">','<div class="preferences"><label for="answer-size">描述文字大小</label><select id="answer-size"><option value="18" selected>标准</option><option value="22">大字</option><option value="28">特大</option></select><label class="checkbox"><input id="fast-describe" type="checkbox">加速模式：画面描述用手机声音</label><p class="muted small">默认使用千问声音。开启加速模式可更快播报画面描述，但会切换为手机声音。结束后再听一遍会重新连接千问语音。</p>');
 template=template.replace(/<p class="intro memory-only">[\s\S]*?<\/p>\s*<p class="intro video-only">[\s\S]*?<\/p>/,'<p class="intro">看物品、记位置，需要时直接问我。</p>');
+template=template.replace('<section class="answer-card"','<div class="place-control"><label for="place-mode">当前场景</label><select id="place-mode"><option value="explore">普通场景</option><option value="home">家</option></select><p class="muted small">也可以说“我在家”或“我出门了”。只有在家中场景才使用已确认的物品位置记录。</p></div><section class="answer-card"');
+template=template.replace('<details class="disclosure memory-only"><summary>我的物品记忆','<details id="home-memory-section" class="disclosure memory-only" hidden><summary>我的物品记忆');
 template=template.replace(/<nav class="bottom-nav"[\s\S]*?<\/nav>/,'');
 template=template.replace('<title>{{title}} · 空间记忆</title>','<title>{{title}}</title>');
 template=template.replace(/\b(memory-only|video-only)\b/g,'');
@@ -170,4 +177,5 @@ for(const alias of ['video','memory']){
 // Include routing rules in the published directory as well as project config.
 await fs.writeFile(path.join(dist,'_redirects'),'/memory /video/ 301!\n/ /video/ 302!\n');
 await fs.appendFile(path.join(dist,'static/style.css'),'\nbody[data-page=assistant] main{padding-bottom:calc(32px + env(safe-area-inset-bottom))}body[data-page=assistant] .notice{bottom:calc(20px + env(safe-area-inset-bottom))}body[data-page=assistant] .session p[role=status]:empty{display:none}\n');
-console.log('Netlify build ready: one assistant page with vision, voice and confirmed memory.');
+await fs.appendFile(path.join(dist,'static/style.css'),'.place-control{margin:12px 0 18px}.place-control label{display:block;font-weight:700;margin-bottom:6px}.place-control select{width:100%;min-height:48px}.place-control p{margin:6px 0 0}\n');
+console.log('Netlify build ready: one assistant page with vision, voice and explicit memory commands.');
