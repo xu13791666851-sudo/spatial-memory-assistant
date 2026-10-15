@@ -83,7 +83,8 @@ js=js.replace("case 'app.memory':",`case 'app.observe':if(!paused&&!videoId&&!vi
  case 'app.scene_cancel':sceneSpeech?.cancel();break;
  case 'app.scene_answer':playSceneAnswer(event.answer,event.token,event.streamed);break;
  case 'app.scene_fallback':localAnswer(event.answer);if(!$('screen-reader-mode').checked&&!$('read-aloud').checked)speak(event.answer);break;
- case 'app.scene_ready':$('camera-state').textContent='画面已准备好，正在描述。你可以接着问物品的位置。';$('scene-time').textContent='本次画面时间：'+new Date(event.observedAt).toLocaleTimeString('zh-CN');break;
+ case 'app.scene_loading':$('camera-state').textContent='正在识别当前画面，请稍候。';$('scene-time').textContent='';break;
+ case 'app.scene_ready':$('camera-state').textContent='识别完成，正在准备播报。你可以接着问物品的位置。';$('scene-time').textContent='本次画面时间：'+new Date(event.observedAt).toLocaleTimeString('zh-CN')+(Number.isFinite(event.durationMs)?' · 识别用时 '+(event.durationMs/1000).toFixed(1)+' 秒（含网络等待）':'');break;
  case 'app.place_changed':syncPlace(event.place);renderPending(null);localAnswer(event.answer);break;
  case 'app.memory_result':renderMemories(event.items);renderPending(event.pending);localAnswer(event.answer);if(!$('read-aloud').checked&&!$('screen-reader-mode').checked)speak(event.answer);break;
  case 'app.memory':`);

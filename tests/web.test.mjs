@@ -161,19 +161,21 @@ test('late microphone attachment is stopped after cancellation',async()=>{
   let stopped=false;await assert.rejects(()=>bridge.attachAudio({getTracks:()=>[{stop(){stopped=true;}}]}));assert.equal(stopped,true);
 });
 
-test('microphone attachment waits for outgoing audio before permitting video startup',async()=>{
+test('microphone attachment verifies outgoing audio',async()=>{
   const {runtime}=runtimeFixture();const bridge=new runtime.Bridge();bridge.configured=true;
   const track={readyState:'live'};let attached=false,reads=0;
   bridge.audioSender={replaceTrack:async()=>{attached=true;},getStats:async()=>{reads++;return new Map([['audio',{type:'outbound-rtp',kind:'audio',bytesSent:attached?100:0}]]);}};
   await bridge.attachAudio({getAudioTracks:()=>[track],getTracks:()=>[track]});
   assert.equal(attached,true);assert.ok(reads>=2);bridge.close();
 });
-test('native video uses a clone and stopping it leaves local preview capture owned by UI',async()=>{
+test('observation uses local preview without cloning or transmitting a video track',async()=>{
   const {runtime,preview}=runtimeFixture();const bridge=new runtime.Bridge();bridge.mode='video';bridge.configured=true;
-  let cloneStopped=false,sourceStopped=false;
-  preview.srcObject={getVideoTracks:()=>[{readyState:'live',stop(){sourceStopped=true;},clone:()=>({stop(){cloneStopped=true;}})}]};
-  bridge.videoSender={replaceTrack:async()=>{},getParameters:()=>({encodings:[]})};
-  await bridge.attachVideo();bridge.clearVideoTrack();assert.equal(cloneStopped,true);assert.equal(sourceStopped,false);bridge.close();
+  let sourceStopped=false;
+  const source={readyState:'live',stop(){sourceStopped=true;},clone:()=>assert.fail('must not encode a duplicate video stream')};
+  preview.srcObject={getVideoTracks:()=>[source]};
+  bridge.videoSender={replaceTrack:async()=>assert.fail('must not upload continuous video')};
+  await bridge.attachVideo();assert.equal(bridge.previewTrack,source);
+  bridge.clearVideoTrack();assert.equal(bridge.previewTrack,null);assert.equal(sourceStopped,false);bridge.close();
 });
 test('session tools keep visual and memory permissions separate',()=>{
   assert.deepEqual(sessionConfig('video').session.tools.map(t=>t.function.name),['stop_video','request_observation']);
@@ -236,12 +238,11 @@ test('offline text command saves in home without a pending confirmation',async()
   assert.equal(runtime.memory.get('眼镜').location,'床头柜上');
 });
 
-test('combined session supports native video without stopping the original preview track',async()=>{
+test('stopping observation leaves preview cleanup to the UI and keeps voice connected',async()=>{
   const {runtime,preview}=runtimeFixture();const bridge=new runtime.Bridge();bridge.mode='assistant';bridge.configured=true;
-  let stopped=false;preview.srcObject={getVideoTracks:()=>[{readyState:'live',clone:()=>({stop(){stopped=true;}})}]};
-  bridge.videoSender={replaceTrack:async()=>{},getParameters:()=>({encodings:[]})};
+  let stopped=false;preview.srcObject={getVideoTracks:()=>[{readyState:'live',stop(){stopped=true;},clone:()=>assert.fail('no duplicate video track')}]};
   await bridge.attachVideo();bridge.endVideo('观察结束，语音继续');
-  assert.equal(stopped,true);assert.equal(bridge.closed,false);bridge.close();
+  assert.equal(stopped,false);assert.equal(bridge.previewTrack,null);assert.equal(bridge.closed,false);bridge.close();
 });
 
 class TestGate{
@@ -261,6 +262,53 @@ const visualFixture=(options={})=>{
 };
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 const toolCall=(bridge,name,args,id)=>bridge.event({type:'response.done',response:{output:[{type:'function_call',call_id:id,name,arguments:JSON.stringify(args)}]}},bridge.channel);
+
+test('realtime connection negotiates audio only while visual questions use snapshots',async()=>{
+  const kinds=[];
+  class Peer{
+    constructor(){this.iceGatheringState='complete';}
+    addTransceiver(kind){kinds.push(kind);return {sender:{}};}
+    createDataChannel(){return {};}
+    async createOffer(){return {type:'offer',sdp:'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n'};}
+    async setLocalDescription(value){this.localDescription=value;}
+    async setRemoteDescription(value){this.remoteDescription=value;}
+    close(){}
+  }
+  const {runtime}=runtimeFixture({RTCPeerConnection:Peer,fetch:async(url,options)=>{
+    if(url==='/api/access')return Response.json({configured:true,authenticated:true});
+    assert.equal(url,'/api/realtime/sdp');assert.ok(!JSON.parse(options.body).sdp.includes('m=video'));
+    return new Response('v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n');
+  }});
+  const bridge=new runtime.Bridge();bridge.mode='assistant';await bridge.connect();
+  assert.deepEqual(kinds,['audio']);assert.equal(bridge.pc.remoteDescription.type,'answer');bridge.close();
+});
+
+test('snapshot request starts before voice cancellation finishes and is sent only once',async()=>{
+  let finish,calls=0,tick=100;
+  const {bridge,events}=visualFixture({now:()=>tick,fetch:async url=>{
+    if(url==='/api/access')return Response.json({configured:true,authenticated:true});
+    assert.equal(url,'/api/vision');calls++;return await new Promise(resolve=>finish=resolve);
+  }});
+  bridge.active=true;bridge.replyPending=true;
+  bridge.send(JSON.stringify({type:'video_start',id:'parallel-view',duration:30}));await settle();bridge.scene.config.onReady();await settle();
+  assert.equal(calls,1);assert.ok(events.some(e=>e.type==='app.scene_loading'));
+  bridge.event({type:'response.done',response:{status:'cancelled'}},bridge.channel);await settle();assert.equal(calls,1);
+  tick=850;finish(Response.json({answer:'画面中有一只杯子。',objects:[]}));await settle();
+  assert.equal(events.find(e=>e.type==='app.scene_ready').durationMs,750);
+  assert.equal(events.filter(e=>e.type==='app.scene_fallback').length,1);bridge.close();
+});
+
+test('common overview and hand questions route directly to a fresh image request',()=>{
+  const {bridge,events,sent}=visualFixture();
+  for(const text of ['眼前有什么','我面前有什么？','我手里拿着什么？']){
+    bridge.send(JSON.stringify({type:'text',text}));
+    assert.equal(events.at(-1).type,'app.observe');
+  }
+  assert.equal(events[0].goal,'');assert.equal(events[1].goal,'');
+  assert.equal(events[2].goal,'我手里拿着什么？');
+  assert.equal(sent.filter(e=>e.type==='response.create').length,0);
+  assert.equal(currentViewIntent('之前记录的杯子在哪里'),null);bridge.close();
+});
 
 test('two and five minute observations are accepted and preserve manual stop',async()=>{
   for(const duration of [120,300]){
