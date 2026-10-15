@@ -374,9 +374,10 @@ export function createRuntime(env){
   return {loaded:loadAccess(),Bridge,memory,place:()=>context.place,setPlace,status:()=>({token:'browser-local',configured:!!settings.configured&&!!settings.authenticated,fixedKey:true,serverConfigured:!!settings.configured,workspace:'',region:'beijing',place:context.place}),
     async api(path,body,method='POST'){
       if(path==='/api/config'){
-        const response=await fetcher('/api/access',{method:method==='DELETE'?'DELETE':'POST',headers:{'Content-Type':'application/json'},...(method==='DELETE'?{}:{body:JSON.stringify({accessCode:body.accessCode})})});
+        const response=await fetcher('/api/access',{cache:'no-store'});
         const result=await response.json();if(!response.ok)throw Error(result.detail||'暂未完成连接。');settings=result;
-        return {configured:!!result.authenticated,message:method==='DELETE'?'已退出本设备的访问授权。':'已连接，通常 30 天内无须再次输入访问码。'};
+        if(!result.configured)throw Error('管理员还没有完成后台连接配置，请稍后再试。');
+        return {configured:true,message:'后台连接已就绪，无须登录，点击开始对话即可。'};
       }
       if(path==='/api/memories')return {items:context.place==='home'?memory.all():[]};
       if(path==='/api/place')return setPlace(body.place);
@@ -394,3 +395,4 @@ export function createRuntime(env){
 
 export const runtime=typeof window==='undefined'?null:createRuntime({storage:window.localStorage,document:window.document,fetch:window.fetch.bind(window),RTCPeerConnection:window.RTCPeerConnection,supportsSpeech:!!window.speechSynthesis});
 if(typeof window!=='undefined')window.spatialRuntime=runtime;
+

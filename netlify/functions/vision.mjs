@@ -1,4 +1,4 @@
-import {authenticated,serverReady} from '../lib/access.mjs';
+import {serverReady} from '../lib/access.mjs';
 import {readEvents} from '../../web/stream.mjs';
 import {PERSON_CONTEXT_RULES} from '../../web/person-context.mjs';
 const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'no-store'}});
@@ -6,7 +6,6 @@ export async function understand(request,fetcher=fetch,env=process.env){
   if(request.method!=='POST')return reply({detail:'请求方式不支持。'},405);
   if(request.headers.get('origin')!==new URL(request.url).origin)return reply({detail:'请从本网站观察。'},403);
   if(!serverReady(env))return reply({detail:'管理员尚未完成连接配置。'},503);
-  if(!authenticated(request,env))return reply({detail:'请先输入访问码。'},401);
   let body;
   try{const raw=await request.text();if(raw.length>260000)return reply({detail:'当前画面过大，请重新观察。'},413);body=JSON.parse(raw);}catch{return reply({detail:'画面格式不正确。'},400);}
   const {image,goal='',stream=false}=body||{};

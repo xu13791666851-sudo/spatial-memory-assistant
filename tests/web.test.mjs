@@ -5,7 +5,7 @@ import {SessionContext,placeIntent} from '../web/context.mjs';
 import {createRuntime,sessionConfig} from '../web/runtime.mjs';
 import {exchange} from '../netlify/functions/realtime-sdp.mjs';
 import {access} from '../netlify/functions/access.mjs';
-import {issueSession,authenticated,sessionCookie} from '../netlify/lib/access.mjs';
+import {serverReady} from '../netlify/lib/access.mjs';
 import {ObservationGate,observationCommand,asksHistory,currentViewIntent} from '../web/interaction.mjs';
 import {ForegroundWake,wakeText} from '../web/wake.mjs';
 import {understand} from '../netlify/functions/vision.mjs';
@@ -16,7 +16,7 @@ import {SceneSpeech} from '../web/scene-speech.mjs';
 
 const storage=()=>{const map=new Map();return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,v),map};};
 const key='sk-offline-test-only-xxxxxxxxxxxxxxxx';
-const request=(body,origin='https://example.netlify.app',cookie=sessionCookie(issueSession(serverEnv)))=>new Request('https://example.netlify.app/api/realtime/sdp',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',Cookie:cookie},body:JSON.stringify(body)});
+const request=(body,origin='https://example.netlify.app')=>new Request('https://example.netlify.app/api/realtime/sdp',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
 const config={key,workspace:'ws-test-fixture',region:'beijing',sdp:'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n'};
 const serverEnv={DASHSCOPE_API_KEY:key,DASHSCOPE_WORKSPACE_ID:config.workspace,APP_ACCESS_CODE:'fixture-access-code'};
 
@@ -77,7 +77,6 @@ test('session context resolves a follow-up target and clears it when the place c
 test('SDP exchange permits only same-origin and validated Alibaba workspace targets',async()=>{
   let calls=0;const noFetch=async()=>{calls++;throw Error('unexpected network');};
   assert.equal((await exchange(request(config,'https://evil.example'),noFetch,serverEnv)).status,403);
-  assert.equal((await exchange(request(config,'https://example.netlify.app',''),noFetch,serverEnv)).status,401);
   assert.equal((await exchange(request({...config,sdp:'not an offer'}),noFetch,serverEnv)).status,400);
   assert.equal(calls,0);
 });
@@ -97,21 +96,20 @@ test('upstream auth errors and exceptions never echo secrets',async()=>{
 function runtimeFixture(options={}){
   const data=storage(),audio={muted:false,pause(){},hidden:true},preview={srcObject:null};
   const document={getElementById:id=>id==='remote-audio'?audio:id==='preview'?preview:{checked:false}};
-  let loggedIn=false;
   const fetcher=async(url,options={})=>{
     if(url==='/api/vision')return Response.json({answer:'测试桌面有电脑、水杯和眼镜。水杯在电脑左侧。',objects:[{name:'水杯',position:'电脑左侧'}],source:'current_camera_frame'});
     assert.equal(url,'/api/access');
-    if(options.method==='POST'){assert.deepEqual(JSON.parse(options.body),{accessCode:'fixture-access-code'});loggedIn=true;}
-    if(options.method==='DELETE')loggedIn=false;
-    return Response.json({configured:true,authenticated:loggedIn,fixedKey:true});
+    assert.equal(options.body,undefined);
+    return Response.json({configured:true,authenticated:true,fixedKey:true,publicAccess:true});
   };
   const runtime=createRuntime({storage:data,document,fetch:fetcher,RTCPeerConnection:class{},...options});
   return {runtime,data,preview,audio,document};
 }
-test('fixed key is never entered or persisted by browser and device logout clears access',async()=>{
-  const {runtime,data}=runtimeFixture();await runtime.loaded;await runtime.api('/api/config',{accessCode:'fixture-access-code'});
-  assert.equal(runtime.status().configured,true);assert.ok(!JSON.stringify([...data.map]).includes(key));
-  await runtime.api('/api/config',null,'DELETE');assert.equal(runtime.status().configured,false);
+test('a fresh browser is ready without a login or persisted credentials',async()=>{
+  const {runtime,data}=runtimeFixture();await runtime.loaded;
+  assert.equal(runtime.status().configured,true);
+  assert.equal((await runtime.api('/api/config')).configured,true);
+  const saved=JSON.stringify([...data.map]);assert.ok(!saved.includes(key));assert.ok(!saved.includes(serverEnv.APP_ACCESS_CODE));
 });
 
 test('Qwen replay cancels an active response and queues only the supplied text',()=>{
@@ -132,18 +130,31 @@ test('public status never exposes backend key, workspace or access code',async()
   const response=await access(new Request('https://example.netlify.app/api/access'),serverEnv);
   const text=await response.text();assert.ok(!text.includes(key));assert.ok(!text.includes(serverEnv.APP_ACCESS_CODE));assert.ok(!text.includes(config.workspace));
 });
-test('access creates HttpOnly secure session that survives requests, rejects forgery and expires',async()=>{
-  const req=new Request('https://example.netlify.app/api/access',{method:'POST',headers:{Origin:'https://example.netlify.app'},body:JSON.stringify({accessCode:serverEnv.APP_ACCESS_CODE})});
-  const response=await access(req,serverEnv);assert.equal(response.status,200);
-  const cookie=response.headers.get('set-cookie');assert.match(cookie,/HttpOnly/);assert.match(cookie,/Secure/);assert.match(cookie,/SameSite=Strict/);
-  const page=new Request('https://example.netlify.app/api/access',{headers:{Cookie:cookie}});
-  assert.equal(authenticated(page,serverEnv),true);
-  assert.equal(authenticated(page,serverEnv,Date.now()+31*86400000),false);
-  const forged=new Request(page.url,{headers:{Cookie:cookie.replace('spatial_access=','spatial_access=9')}});assert.equal(authenticated(forged,serverEnv),false);
+test('public access works without a code or cookie and ignores a legacy code',async()=>{
+  for(const env of [serverEnv,{DASHSCOPE_API_KEY:key,DASHSCOPE_WORKSPACE_ID:config.workspace}]){
+    assert.equal(serverReady(env),true);
+    const response=await access(new Request('https://example.netlify.app/api/access'),env);
+    assert.deepEqual(await response.json(),{configured:true,authenticated:true,fixedKey:true,publicAccess:true});
+    assert.equal(response.headers.get('set-cookie'),null);
+    const legacy=await access(new Request('https://example.netlify.app/api/access',{method:'POST',headers:{Origin:'https://example.netlify.app'},body:JSON.stringify({accessCode:'wrong-old-code'})}),env);
+    assert.equal(legacy.status,200);assert.equal((await legacy.json()).authenticated,true);
+  }
 });
-test('missing backend protection fails closed even with client-provided key',async()=>{
-  let network=0;const result=await exchange(request(config),async()=>{network++;},{DASHSCOPE_API_KEY:key,DASHSCOPE_WORKSPACE_ID:config.workspace});
-  assert.equal(result.status,503);assert.equal(network,0);
+test('missing provider configuration never calls the model even with a client key',async()=>{
+  for(const env of [{},{DASHSCOPE_API_KEY:key},{DASHSCOPE_WORKSPACE_ID:config.workspace}]){
+    let network=0;const unused=async()=>{network++;};
+    assert.equal((await exchange(request(config),unused,env)).status,503);
+    assert.equal((await understand(visionRequest({image:jpeg}),unused,env)).status,503);
+    const status=await (await access(new Request('https://example.netlify.app/api/access'),env)).json();
+    assert.equal(status.configured,false);assert.equal(status.authenticated,false);assert.equal(network,0);
+  }
+});
+
+test('access status retains origin checks and can remove obsolete cookies',async()=>{
+  const url='https://example.netlify.app/api/access';
+  assert.equal((await access(new Request(url,{method:'POST',headers:{Origin:'https://evil.example'}}),serverEnv)).status,403);
+  const result=await access(new Request(url,{method:'DELETE',headers:{Origin:'https://example.netlify.app'}}),serverEnv);
+  assert.match(result.headers.get('set-cookie'),/Max-Age=0/);assert.equal((await result.json()).authenticated,true);
 });
 test('tool writes are denied in video sessions and never auto-save in memory sessions',()=>{
   for(const mode of ['video','memory']){
@@ -541,10 +552,10 @@ test('a late vision result after closing the camera cannot become a current obse
 });
 
 const jpeg='/9j/2Q==';
-const visionRequest=(body,cookie=sessionCookie(issueSession(serverEnv)))=>new Request('https://example.netlify.app/api/vision',{method:'POST',headers:{Origin:'https://example.netlify.app',Cookie:cookie},body:JSON.stringify(body)});
-test('vision requires access, rejects remote image URLs and keeps the endpoint fixed',async()=>{
+const visionRequest=(body,origin='https://example.netlify.app')=>new Request('https://example.netlify.app/api/vision',{method:'POST',headers:{Origin:origin},body:JSON.stringify(body)});
+test('public vision retains origin checks, rejects remote images and keeps the endpoint fixed',async()=>{
   let calls=0;const unused=async()=>{calls++;throw Error('must not fetch');};
-  assert.equal((await understand(visionRequest({image:jpeg},''),unused,serverEnv)).status,401);
+  assert.equal((await understand(visionRequest({image:jpeg},'https://evil.example'),unused,serverEnv)).status,403);
   assert.equal((await understand(visionRequest({image:'https://evil.example/private'}),unused,serverEnv)).status,400);
   assert.equal(calls,0);
   const result=await understand(visionRequest({image:jpeg,workspace:'evil',key:'ignored'}),async(url,options)=>{
@@ -613,3 +624,4 @@ test('interrupting sentence speech drops its queued continuation and ignores lat
   assert.equal(spoken.length,2);assert.deepEqual(done,[['old',false]]);player.finish('新画面。');spoken[1].onend();
   assert.deepEqual(done,[['old',false],['new',false]]);
 });
+

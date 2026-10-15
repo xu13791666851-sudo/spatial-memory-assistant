@@ -5,7 +5,6 @@ export async function exchange(request, fetcher=fetch, env=process.env) {
   if(request.method!=='POST')return json('请求方式不支持。',405);
   if(request.headers.get('origin')!==new URL(request.url).origin)return json('请从本网站发起连接。',403);
   if(!serverReady(env))return json('管理员还没有完成后台连接配置，请稍后再试。',503);
-  if(!authenticated(request,env))return json('请先输入访问码。',401);
   let body;
   try{
     const raw=await request.text();
@@ -36,4 +35,4 @@ export async function exchange(request, fetcher=fetch, env=process.env) {
 }
 export default request=>exchange(request);
 export const config={path:'/api/realtime/sdp',method:'POST',rateLimit:{windowLimit:12,windowSize:60,aggregateBy:['ip','domain']}};
-import {authenticated,serverReady} from '../lib/access.mjs';
+import {serverReady} from '../lib/access.mjs';
