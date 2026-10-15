@@ -22,7 +22,7 @@ export class ForegroundWake{
     let recognition;try{recognition=new this.Recognition();}catch{this.disable();this.onState('当前浏览器无法使用语音唤醒，请点击“开始对话”。');return;}
     this.recognition=recognition;
     recognition.lang='zh-CN';recognition.continuous=true;recognition.interimResults=false;
-    recognition.onstart=()=>{if(generation===this.generation){this.listening=true;this.onState('唤醒待机中，说“小忆”开始观察。');}};
+    recognition.onstart=()=>{if(generation===this.generation){this.listening=true;this.onState('唤醒待机中，说“小忆”开始对话。');}};
     recognition.onresult=event=>{
       if(generation!==this.generation)return;
       for(let i=event.resultIndex||0;i<event.results.length;i++){

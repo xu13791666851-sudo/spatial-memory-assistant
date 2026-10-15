@@ -1,7 +1,7 @@
 export const asksHistory=text=>/(之前|以前|上次|昨天|前天|记忆|记录|记得|曾经|放哪了|放到哪了|记过)/.test(String(text||''));
 export function observationCommand(text){
   text=String(text||'').trim().replace(/[，,。.!！?？\s]/g,'');
-  if(/^(?:小忆|小意|小易)(?:你好)?$/.test(text))return {goal:''};
+  if(/^(?:小忆|小意|小易)(?:你好)?$/.test(text))return null;
   text=text.replace(/^(?:你好)?(?:小忆|小意|小易)[，,]?/,'');
   if(/^(?:请|帮我)?(?:再看(?:一)?下|再看看|再观察(?:一下|一次)?|重新观察|看(?:一)?下(?:周围)?|看看周围|描述(?:一下)?(?:环境|周围)|开启摄像头|打开摄像头|开始观察)$/.test(text))return {goal:''};
   if(/^(?:请|帮我)?(?:(?:看看|看一下|描述一下))?(?:我(?:的)?)?(?:眼前|面前|周围|当前画面|这个场景)(?:有(?:些|点)?什么|是什么样(?:的)?|是什么环境)$/.test(text))return {goal:''};
