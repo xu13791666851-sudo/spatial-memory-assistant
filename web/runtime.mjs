@@ -7,13 +7,13 @@ import {PERSON_CONTEXT_RULES} from './person-context.mjs';
 const tool=(name,description,properties={},required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
 const hasVideo=mode=>mode==='video'||mode==='assistant';
 const hasMemory=mode=>mode==='memory'||mode==='assistant';
-export function sessionConfig(mode,place='explore'){
+export function sessionConfig(mode,place='explore',deviceVoice=false){
   const tools=[...(hasVideo(mode)?[tool('stop_video','用户要求关闭摄像头或停止观察时立即执行。')]:[]),...(hasMemory(mode)?[
     tool('query_memory','查询用户以前提供的位置，不能视为当前位置。',{name:{type:'string'}},['name']),
     tool('list_memories','列出用户历史物品记录。'),
     tool('prepare_memory','用户明确要求记录、移动、更正或删除时准备操作，必须等待页面确认。',{action:{type:'string',enum:['record','move','correct','delete']},name:{type:'string'},location:{type:'string'},event_time:{type:'string'}},['action','name'])]:[]),...(hasVideo(mode)?[
     tool('request_observation','用户询问当前画面中的物品、人物、文字或要求再看、描述周围时，调用此工具开启或更新观察。等待工具返回可用画面后再回答。',{goal:{type:'string',description:'用户希望看的内容，例如找水杯；概括环境可留空。'}})]:[])];
-  return {type:'session.update',session:{modalities:['text','audio'],voice:'Tina',input_audio_format:'pcm',output_audio_format:'pcm',
+  return {type:'session.update',session:{modalities:deviceVoice?['text']:['text','audio'],voice:'Tina',input_audio_format:'pcm',output_audio_format:'pcm',
     input_audio_transcription:{model:'qwen3-asr-flash-realtime'},turn_detection:{type:'semantic_vad',threshold:0.5,silence_duration_ms:800},
     tools,enable_search:false,max_tokens:700,video:{input:{representation_compact:'none'}},
     instructions:(mode==='assistant'?(place==='home'?'当前是家中场景。先回答当前画面；找不到目标时可以补充用户明确保存的家中历史位置，并标明它未经当前确认。用户说出以“记住”开头的完整物品位置口令时，应用会直接保存并回报；其他修改或删除仍需页面确认。':'当前是普通场景。只回答本次观察和本轮对话；不要查询、列出或修改家中物品记忆。用户说我到家了可以切换到家中场景。'):mode==='video'?'当前是视频理解，只观察和回答，不能查询或修改物品记忆。':'当前是语音记忆，没有视频输入。')+
@@ -50,6 +50,14 @@ export function createRuntime(env){
       queueMicrotask(()=>{if(!this.closed)this.onopen?.();});
     }
     emit(event){if(!this.closed)this.onmessage?.({data:JSON.stringify(event)});}
+    usesDeviceVoice(){return !!env.supportsSpeech&&!!document.getElementById('fast-describe')?.checked;}
+    prepareDeviceReplay(){
+      if(this.closed)return;
+      this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.scene.stop();
+      this.localSpeechToken=null;this.visualPending=false;this.suppressResponse=true;this.queuedReply=null;this.heldEvents=[];
+      this.emit({type:'app.scene_cancel'});this.stopPlayback();
+      if(this.active||this.replyPending)this.control({type:'response.cancel'});
+    }
     handleRemember(text){
       if(!rememberCommand(text))return false;
       this.suppressResponse=true;this.queuedReply=null;this.replyPending=false;this.heldEvents=[];
@@ -225,6 +233,10 @@ export function createRuntime(env){
     finishLocalSpeech(token,failed=false){
       if(this.closed||this.localSpeechToken!==token)return;
       this.localSpeechToken=null;this.visualPending=false;this.suppressResponse=false;this.updatePlayback();
+      if(failed&&this.usesDeviceVoice()){
+        if(this.sceneCommit?.speechToken===token)this.sceneCommit.localSpeechFailed=true;
+        this.emit({type:'app.device_voice_error',message:'手机朗读未能播放，文字已保留。请点击“再听一遍”，或结束对话后切换千问声音。'});return;
+      }
       if(failed&&this.sceneCommit?.speechToken===token){this.sceneCommit.localSpeechFailed=true;return;}
       if(failed)this.requestReply('请直接语音播报应用提供的本次画面理解answer，使用简短中文，不添加识别结果之外的内容。');
     }
@@ -235,7 +247,7 @@ export function createRuntime(env){
     }
     initialize(){
       if(this.closed||this.updateSent||!this.created||this.pc.connectionState!=='connected'||this.channel?.readyState!=='open')return;
-      this.updateSent=true;this.control(sessionConfig(this.mode,context.place));
+      this.updateSent=true;this.control(sessionConfig(this.mode,context.place,this.usesDeviceVoice()));
     }
     async connect(){
       try{
@@ -247,6 +259,7 @@ export function createRuntime(env){
         this.pc.ontrack=e=>{
           if(e.track.kind!=='audio'||this.closed)return;
           this.audio.srcObject=new MediaStream([e.track]);this.updatePlayback();
+          if(this.usesDeviceVoice())return;
           this.audio.play().catch(()=>{if(!this.closed){this.audio.hidden=false;this.audio.controls=true;this.emit({type:'app.audio_blocked',message:'浏览器暂未播放声音，可以点击“再听一遍”，或在“更多”中使用语音播放控件。'});}});
         };
         this.pc.onconnectionstatechange=()=>{
@@ -362,7 +375,7 @@ export function createRuntime(env){
       if(id){this.control({type:'session.update',session:{instructions:this.sceneInstructions()+'\n不能把旧画面说成当前位置；需要确认当前物品时重新请求观察。'}});this.emit({type:'app.video_stopped',id,frames:this.frames,message});}
     }
     stopPlayback(){this.audio.muted=true;}
-    updatePlayback(){this.audio.muted=this.paused||this.visualPending||this.awaitingTranscript||!!document.getElementById('screen-reader-mode')?.checked;}
+    updatePlayback(){this.audio.muted=this.usesDeviceVoice()||this.paused||this.visualPending||this.awaitingTranscript||!!document.getElementById('screen-reader-mode')?.checked;}
     close(){
       if(this.closed)return;this.closed=true;this.localSpeechToken=null;this.readyState=3;this.requestController.abort();clearTimeout(this.sessionTimer);clearTimeout(this.videoTimer);clearTimeout(this.photoTimer);clearTimeout(this.sceneInstructionTimer);this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.pendingInstructions=false;this.scene.stop();this.queuedReply=null;this.observationCall=null;this.clearVideoTrack();
       for(const c of this.channels){try{c.close();}catch{}}
@@ -393,6 +406,6 @@ export function createRuntime(env){
     }};
 }
 
-export const runtime=typeof window==='undefined'?null:createRuntime({storage:window.localStorage,document:window.document,fetch:window.fetch.bind(window),RTCPeerConnection:window.RTCPeerConnection,supportsSpeech:!!window.speechSynthesis});
+export const runtime=typeof window==='undefined'?null:createRuntime({storage:window.localStorage,document:window.document,fetch:window.fetch.bind(window),RTCPeerConnection:window.RTCPeerConnection,supportsSpeech:!!window.speechSynthesis&&!!window.SpeechSynthesisUtterance});
 if(typeof window!=='undefined')window.spatialRuntime=runtime;
 

@@ -53,10 +53,17 @@ js=js.replace('本地程序没有准备好，请刷新或重新启动。','网�
 js=js.replace("await stop();notify('连接已结束，麦克风和摄像头已关闭。');","await stop();if($('notice').hidden)notify('连接已结束，麦克风和摄像头已关闭。');");
 js=js.replace("import {runtime} from './runtime.mjs';","import {runtime} from './runtime.mjs';\nimport {ForegroundWake} from './wake.mjs';\nimport {SceneSpeech} from './scene-speech.mjs';\nlet sceneSpeech=null,sceneText='';");
 js=js.replace('function startVoice(){','function startVoice(){\n wake.suspend();');
-js=js.replace('function speak(text){',`function speak(text){
+js=js.replace(/function speak\(text\)\{[^\n]*\}/,`function speak(text){
  if($('screen-reader-mode').checked){$('answer-live').textContent=text;return;}
  if(!$('fast-describe').checked){void replayWithQwen(text);return;}
-`);
+ if(!sceneSpeech){notify('当前浏览器没有可用的手机朗读，文字回答仍可查看。');return;}
+ stopPlayback();sceneSpeech.begin('device:'+crypto.randomUUID());sceneSpeech.finish(text);
+}`);
+js=js.replace("if($('read-aloud').checked&&!$('screen-reader-mode').checked)speak(text);","if(($('read-aloud').checked||$('fast-describe').checked)&&!$('screen-reader-mode').checked)speak(text);");
+js=js.replace('function stateUI(text){',"function stateUI(text){$('fast-describe').disabled=sessionActive()||!window.speechSynthesis||!window.SpeechSynthesisUtterance;");
+js=js.replace("$('replay').onclick=()=>lastAnswer?speak(lastAnswer):notify('还没有可重播的回答。');","$('replay').onclick=()=>{if(!lastAnswer){notify('还没有可重播的回答。');return;}if($('fast-describe').checked)socket?.prepareDeviceReplay();speak(lastAnswer);};");
+js=js.replace("part.textContent+=event.delta;$('chat').scrollTop=$('chat').scrollHeight;break;","part.textContent+=event.delta;$('chat').scrollTop=$('chat').scrollHeight;if($('fast-describe').checked&&!$('screen-reader-mode').checked)sceneSpeech?.reply(event);break;");
+js=js.replace('lastAnswer=text;showAnswer(text,true);break;',"lastAnswer=text;showAnswer(text,true);if($('fast-describe').checked&&!$('screen-reader-mode').checked)sceneSpeech?.reply(event);break;");
 js=js.replace('audioContext=new AudioContext();await audioContext.resume();','audioContext=audioContext||new AudioContext();await audioContext.resume();');
 js=js.replace("else{if(!await startMic())return;paused=false;wsSend({type:'resume'});","else{wsSend({type:'resume'});if(!await startMic())return;paused=false;");
 js=js.replace(/async function startVideo\(\)\{[\s\S]*?\r?\n\}\r?\nfunction finishVoice/,`async function startVideo(goal=""){
@@ -82,11 +89,12 @@ js=js.replace("case 'app.memory':",`case 'app.observe':if(!paused&&!videoId&&!vi
  case 'app.scene_delta':sceneText+=event.text;$('latest-answer').textContent=sceneText;sceneSpeech?.append(event.text);break;
  case 'app.scene_cancel':sceneSpeech?.cancel();break;
  case 'app.scene_answer':playSceneAnswer(event.answer,event.token,event.streamed);break;
- case 'app.scene_fallback':localAnswer(event.answer);if(!$('screen-reader-mode').checked&&!$('read-aloud').checked)speak(event.answer);break;
+ case 'app.scene_fallback':localAnswer(event.answer);if(!$('screen-reader-mode').checked&&!$('read-aloud').checked&&!$('fast-describe').checked)speak(event.answer);break;
+ case 'app.device_voice_error':notify(event.message,0);break;
  case 'app.scene_loading':$('camera-state').textContent='正在识别当前画面，请稍候。';$('scene-time').textContent='';break;
  case 'app.scene_ready':$('camera-state').textContent='识别完成，正在准备播报。你可以接着问物品的位置。';$('scene-time').textContent='本次画面时间：'+new Date(event.observedAt).toLocaleTimeString('zh-CN')+(Number.isFinite(event.durationMs)?' · 识别用时 '+(event.durationMs/1000).toFixed(1)+' 秒（含网络等待）':'');break;
  case 'app.place_changed':syncPlace(event.place);renderPending(null);localAnswer(event.answer);break;
- case 'app.memory_result':renderMemories(event.items);renderPending(event.pending);localAnswer(event.answer);if(!$('read-aloud').checked&&!$('screen-reader-mode').checked)speak(event.answer);break;
+ case 'app.memory_result':renderMemories(event.items);renderPending(event.pending);localAnswer(event.answer);if(!$('read-aloud').checked&&!$('screen-reader-mode').checked&&!$('fast-describe').checked)speak(event.answer);break;
  case 'app.memory':`);
 js=js.replace("if(event.transcript){bubble(event.transcript,true);","if(event.transcript){bubble(event.transcript,true);if(/^(结束对话|退出对话)[。！!\\s]*$/.test(event.transcript.trim())){await stop();break;}");
 js=js.replace("case 'app.video_started':{","case 'app.video_started':{");
@@ -106,8 +114,9 @@ window.addEventListener('pagehide',()=>wake.disable());
 function syncPlace(place){$('place-mode').value=place;$('home-memory-section').hidden=place!=='home';}
 syncPlace(runtime.place());
 $('place-mode').onchange=()=>{try{const result=runtime.setPlace($('place-mode').value);syncPlace(result.place);if(!socket)localAnswer(result.answer);}catch(err){notify(err.message);syncPlace(runtime.place());}};
-try{const fast=localStorage.getItem('spatial-fast-describe-v2');if(fast!==null)$('fast-describe').checked=fast==='true';}catch{}
-$('fast-describe').onchange=()=>{try{localStorage.setItem('spatial-fast-describe-v2',String($('fast-describe').checked));}catch{}};
+try{const fast=localStorage.getItem('spatial-device-voice-v1');if(fast!==null)$('fast-describe').checked=fast==='true';}catch{}
+if(!window.speechSynthesis||!window.SpeechSynthesisUtterance){$('fast-describe').checked=false;$('fast-describe').disabled=true;$('device-voice-note').textContent='当前浏览器不支持手机朗读，将使用千问声音。';}
+$('fast-describe').onchange=()=>{if(sessionActive()){notify('请先结束对话，再切换声音。');return;}try{localStorage.setItem('spatial-device-voice-v1',String($('fast-describe').checked));}catch{}};
 async function replayWithQwen(text){
  try{
   if(paused){notify('请先恢复对话，再听一遍。');return;}
@@ -119,8 +128,8 @@ function applyAnswerSize(){document.documentElement.style.setProperty('--answer-
 try{const size=localStorage.getItem('spatial-answer-size');if(['18','22','28'].includes(size))$('answer-size').value=size;}catch{}
 applyAnswerSize();$('answer-size').onchange=()=>{applyAnswerSize();try{localStorage.setItem('spatial-answer-size',$('answer-size').value);}catch{}};
 sceneSpeech=window.speechSynthesis?new SceneSpeech({synth:speechSynthesis,Utterance:SpeechSynthesisUtterance,
- onStart:()=>{$('voice-state').textContent='正在播报画面描述，可以打断。';},
- onDone:(token,failed)=>{socket?.finishLocalSpeech(token,failed);if(ready)$('voice-state').textContent='正在听你说话';}
+ onStart:()=>{$('voice-state').textContent='正在用手机声音回答，可以打断。';},
+ onDone:(token,failed)=>{socket?.finishLocalSpeech(token,failed);if(failed&&/^(reply:|device:)/.test(token))notify('手机朗读未能播放，文字已保留。请点击“再听一遍”，或结束对话后切换千问声音。',0);if(ready)$('voice-state').textContent='正在听你说话';}
 }):null;
 function playSceneAnswer(text,token,streamed=false){
  const bridge=socket;lastAnswer=text;bubble(text);$('latest-answer').textContent=text;$('replay').disabled=false;
@@ -142,7 +151,7 @@ template=template.replace(/密钥仅保存在当前页面内存中。建立连�
 template=template.replace('语音、视频识别效果及手机真机仍待测试；NFC 和房间定位尚未接入。','公网版使用浏览器实时通话。实际千问连接、摄像头及 iPhone 体验仍需真机验证；NFC 和房间定位尚未接入。');
 template=template.replace('<details class="disclosure"><summary>对话记录','<audio id="remote-audio" autoplay playsinline aria-label="助手语音" hidden></audio><details class="disclosure"><summary>对话记录');
 template=template.replace('<script src="/static/video-stream.js"></script><script src="/static/app.js"></script>','<script src="/static/video-stream.js"></script><script type="module" src="/static/app.js"></script>');
-template=template.replace('<div class="preferences">','<div class="preferences"><label for="answer-size">描述文字大小</label><select id="answer-size"><option value="18" selected>标准</option><option value="22">大字</option><option value="28">特大</option></select><label class="checkbox"><input id="fast-describe" type="checkbox">加速模式：画面描述用手机声音</label><p class="muted small">默认使用千问声音。开启加速模式可更快播报画面描述，但会切换为手机声音。结束后再听一遍会重新连接千问语音。</p>');
+template=template.replace('<div class="preferences">','<div class="preferences"><label for="answer-size">描述文字大小</label><select id="answer-size"><option value="18" selected>标准</option><option value="22">大字</option><option value="28">特大</option></select><label class="checkbox"><input id="fast-describe" type="checkbox" checked aria-describedby="device-voice-note">使用手机声音：描述、对话和重播</label><p id="device-voice-note" class="muted small">测试版默认使用手机或浏览器的中文朗读。千问负责理解问题和图片，不生成播报声音；文字生成完整句子后即可朗读。结束对话后可取消勾选，切回千问声音。手机重播无需重新连接千问。</p>');
 template=template.replace(/<p class="intro memory-only">[\s\S]*?<\/p>\s*<p class="intro video-only">[\s\S]*?<\/p>/,'<p class="intro">看物品、记位置，需要时直接问我。</p>');
 template=template.replace('<section class="answer-card"','<div class="place-control"><label for="place-mode">当前场景</label><select id="place-mode"><option value="explore">普通场景</option><option value="home">家</option></select><p class="muted small">也可以说“我在家”或“我出门了”。只有在家中场景才使用已确认的物品位置记录。</p></div><section class="answer-card"');
 template=template.replace('<details class="disclosure memory-only"><summary>我的物品记忆','<details id="home-memory-section" class="disclosure memory-only" hidden><summary>我的物品记忆');

@@ -404,11 +404,30 @@ test('late device speech callbacks cannot clear a newer visual request',async()=
   const answer=events.find(e=>e.type==='app.scene_answer');bridge.requestCurrentView('找眼镜');bridge.finishLocalSpeech(answer.token);
   assert.equal(bridge.visualPending,true);bridge.close();
 });
-test('failed device speech falls back to the cloud voice once',async()=>{
+test('failed device speech reports a retry option without switching back to cloud speech',async()=>{
   const {bridge,sent,events}=fastFixture();bridge.send(JSON.stringify({type:'video_start',id:'fallback-view',duration:120}));await settle();bridge.scene.config.onReady();await settle();
   const answer=events.find(e=>e.type==='app.scene_answer');bridge.finishLocalSpeech(answer.token,true);bridge.event({type:'session.updated'},bridge.channel);
-  assert.equal(sent.filter(e=>e.type==='response.create').length,1);bridge.finishLocalSpeech(answer.token,true);
-  assert.equal(sent.filter(e=>e.type==='response.create').length,1);bridge.close();
+  assert.equal(sent.filter(e=>e.type==='response.create').length,0);bridge.finishLocalSpeech(answer.token,true);
+  assert.equal(events.filter(e=>e.type==='app.device_voice_error').length,1);assert.equal(bridge.visualPending,false);bridge.close();
+});
+
+test('device voice requests text-only model output and keeps cloud audio muted',()=>{
+  for(const supportsSpeech of [true,false]){
+    const {runtime,document,audio}=runtimeFixture({supportsSpeech});
+    const get=document.getElementById;document.getElementById=id=>id==='fast-describe'?{checked:true}:get(id);
+    const bridge=new runtime.Bridge();bridge.mode='assistant';bridge.created=true;bridge.pc={connectionState:'connected',close(){}};
+    const sent=[];bridge.channel={readyState:'open',send:raw=>sent.push(JSON.parse(raw))};bridge.initialize();
+    assert.deepEqual(sent[0].session.modalities,supportsSpeech?['text']:['text','audio']);
+    bridge.updatePlayback();assert.equal(audio.muted,supportsSpeech);bridge.close();
+  }
+});
+
+test('device replay cancels pending cloud work without making a new model response',()=>{
+  const {bridge,sent}=fastFixture();bridge.active=true;let aborted=false;
+  bridge.sceneCommit={controller:{abort(){aborted=true;}}};bridge.queuedReply={text:'old answer'};
+  bridge.prepareDeviceReplay();assert.equal(aborted,true);assert.equal(bridge.queuedReply,null);
+  assert.ok(sent.some(e=>e.type==='response.cancel'));assert.ok(!sent.some(e=>e.type==='response.create'));
+  bridge.event({type:'response.text.done',item_id:'old',text:'旧回答'},bridge.channel);assert.equal(bridge.suppressResponse,true);bridge.close();
 });
 
 test('readable local preview does not wait for remote video statistics',async()=>{
@@ -623,5 +642,26 @@ test('interrupting sentence speech drops its queued continuation and ignores lat
   player.begin('old');player.append('第一句。第二句。');const old=spoken[0];player.cancel();player.begin('new');player.append('新画面。');old.onend();
   assert.equal(spoken.length,2);assert.deepEqual(done,[['old',false]]);player.finish('新画面。');spoken[1].onend();
   assert.deepEqual(done,[['old',false],['new',false]]);
+});
+
+test('ordinary conversation reads complete text sentences before the final response and never repeats them',()=>{
+  class Utterance{constructor(text){this.text=text;}}
+  const spoken=[];const voice={lang:'zh-CN',localService:true};
+  const player=new SceneSpeech({synth:{cancel(){},getVoices:()=>[{lang:'en-US'},voice],speak:u=>{spoken.push(u);u.onstart();}},Utterance,schedule:()=>1,cancelTimer:()=>{}});
+  player.reply({type:'response.text.delta',item_id:'one',delta:'你好'});assert.equal(spoken.length,0);
+  player.reply({type:'response.text.delta',item_id:'one',delta:'。有什么可以帮你？'});
+  assert.equal(spoken[0].text,'你好。有什么可以帮你？');assert.equal(spoken[0].voice,voice);
+  spoken[0].onend();player.reply({type:'response.text.done',item_id:'one',text:'你好。有什么可以帮你？'});
+  player.reply({type:'response.text.done',item_id:'one',text:'你好。有什么可以帮你？'});
+  assert.equal(spoken.length,1);assert.equal(player.finished,true);
+});
+
+test('interrupting a spoken conversation ignores late text while a new reply can be read',()=>{
+  class Utterance{constructor(text){this.text=text;}}
+  const spoken=[];const player=new SceneSpeech({synth:{cancel(){},speak:u=>spoken.push(u)},Utterance,schedule:()=>1,cancelTimer:()=>{}});
+  player.reply({type:'response.text.delta',item_id:'old',delta:'旧回答。'});player.cancel();
+  player.reply({type:'response.text.done',item_id:'old',text:'旧回答。还有一句。'});
+  player.reply({type:'response.text.done',item_id:'new',text:'新回答'});
+  assert.deepEqual(spoken.map(u=>u.text),['旧回答。','新回答']);player.cancel();
 });
 
