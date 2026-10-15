@@ -310,6 +310,30 @@ test('common overview and hand questions route directly to a fresh image request
   assert.equal(currentViewIntent('之前记录的杯子在哪里'),null);bridge.close();
 });
 
+test('reading a complete visual answer does not wait for a scene-context acknowledgement',async()=>{
+  const {bridge,events,sent}=visualFixture();
+  bridge.send(JSON.stringify({type:'video_start',id:'read-now',duration:30}));await settle();bridge.scene.config.onReady();await settle();
+  assert.equal(bridge.pendingInstructions,true);
+  const answer=events.find(e=>e.type==='app.scene_fallback').answer;
+  bridge.replayAnswer(answer);
+  assert.equal(sent.filter(e=>e.type==='response.create').length,1);
+  assert.ok(sent.some(e=>e.item?.content?.[0]?.text.includes(answer)));
+  bridge.event({type:'session.updated'},bridge.channel);
+  assert.equal(sent.filter(e=>e.type==='response.create').length,1);bridge.close();
+});
+
+test('delayed context acknowledgement does not silently discard a queued user reply',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const {bridge,sent}=visualFixture();
+  bridge.send(JSON.stringify({type:'video_start',id:'context-delay',duration:30}));await settle();bridge.scene.config.onReady();await settle();
+  bridge.requestReply('请根据这次画面继续回答。');
+  assert.equal(sent.filter(e=>e.type==='response.create').length,0);
+  t.mock.timers.tick(6000);
+  assert.equal(sent.filter(e=>e.type==='response.create').length,1);
+  bridge.event({type:'session.updated'},bridge.channel);
+  assert.equal(sent.filter(e=>e.type==='response.create').length,1);bridge.close();
+});
+
 test('two and five minute observations are accepted and preserve manual stop',async()=>{
   for(const duration of [120,300]){
     const {bridge}=visualFixture();bridge.send(JSON.stringify({type:'video_start',id:'long-view',duration}));await settle();
