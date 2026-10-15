@@ -15,12 +15,12 @@ js=js.replace("await audioContext.audioWorklet.addModule('/static/recorder.js');
 js=js.replace("function stopPlayback(){", "function stopPlayback(){sceneSpeech?.cancel();socket?.stopPlayback?.();");
 js=js.replace("socket=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws/realtime`);", "socket=new window.spatialRuntime.Bridge();");
 js=js.replace("const status=await (await fetch('/api/status')).json();", "const status=window.spatialRuntime.status();");
-js=js.replace("{key:$('key').value,workspace:$('workspace').value.trim(),region:$('region').value}","{accessCode:$('access-code').value.trim()}");
-js=js.replaceAll("$('key').value=''","$('access-code').value=''").replaceAll("$('key').focus()","$('access-code').focus()");
+js=js.replace(/\$\('settings-form'\)\.addEventListener\('submit',[^\n]*\);/,"$('settings-form').addEventListener('submit',async e=>{e.preventDefault();try{const result=await api('/api/config');configured=result.configured;$('config-state').textContent=result.message;$('connection').textContent='连接已设置';notify(result.message);}catch(err){configured=false;$('config-state').textContent=err.message;notify(err.message);}});");
+js=js.replace(/\$\('clear-config'\)\.onclick=[^\n]*;/,'');
+js=js.replaceAll("$('key').focus()","$('config-state').focus()");
 js=js.replace("$('workspace').value=status.workspace;$('region').value=status.region;",'');
-js=js.replaceAll('请先在设置里填写密钥并保存连接。','请先输入访问码连接。');
-js=js.replaceAll('已清除本次配置并停止采集。','已退出本设备并停止采集。').replaceAll('已清除本次配置。','已退出本设备。');
-js=js.replace("configured?'连接已设置。':'连接尚未设置，填写密钥后保存。'", "configured?'后台已固定连接，无须填写密钥。':(status.serverConfigured?'首次使用请输入访问码。':'管理员还没有完成后台连接配置。')");
+js=js.replaceAll('请先在设置里填写密钥并保存连接。','后台连接尚未就绪，请在设置中检查连接。');
+js=js.replace("configured?'连接已设置。':'连接尚未设置，填写密钥后保存。'", "configured?'连接已就绪，无须登录，点击开始对话即可。':'后台连接暂不可用，请点击检查连接；若仍未就绪，请联系管理员。'");
 js=js.replace("if(id==='screen-reader-mode'&&$(id).checked)stopPlayback();", "if(id==='screen-reader-mode')socket?.updatePlayback?.();if(id==='screen-reader-mode'&&$(id).checked)stopPlayback();");
 js=js.replace("case 'app.error':", "case 'app.audio_blocked':notify(event.message,0);break;\n case 'app.error':");
 js=js.replace("width:{ideal:640},height:{ideal:480},facingMode", "width:{ideal:640,max:640},height:{ideal:480,max:640},frameRate:{ideal:24,max:30},facingMode");
@@ -94,10 +94,9 @@ js+=`\nconst wake=new ForegroundWake({Recognition:window.SpeechRecognition||wind
  onState:message=>{$('wake-state').textContent=message;$('wake-toggle').textContent=wake.enabled?'关闭语音唤醒':'启用语音唤醒（前台）';if(!sessionActive())$('voice-state').textContent=message;},
  onWake:async({goal})=>{try{await new Promise(resolve=>setTimeout(resolve,350));if(!document.hidden)await startVideo(goal);}catch{notify('唤醒后未能开启，请点击“开始对话”。');}}
 });
-$('clear-config').addEventListener('click',()=>{wake.disable();$('wake-state').textContent='访问已退出，语音唤醒已关闭。';$('wake-toggle').textContent='启用语音唤醒（前台）';});
 $('wake-toggle').onclick=async()=>{if(wake.enabled){wake.disable();$('wake-state').textContent='语音唤醒已关闭。';$('wake-toggle').textContent='启用语音唤醒（前台）';if(!sessionActive())$('voice-state').textContent='';return;}
  if(sessionActive()){notify('请先结束对话，再启用唤醒待机。');return;}
- if(!configured){openSettings($('wake-toggle'));notify('请先输入访问码连接，再启用唤醒。');return;}
+ if(!configured){openSettings($('wake-toggle'));notify('后台连接尚未就绪，请先在设置中检查连接。');return;}
  if(wake.supported){primeSpeech();try{audioContext=audioContext||new AudioContext();await audioContext.resume();}catch{}}
  wake.enable();
 };
@@ -136,7 +135,8 @@ template=template.replace('密钥仅保存在本次程序运行的内存中。',
 template=template.replace('这里是之前告诉我的位置，尚未确认现在是否仍在那里。','记录只保存在当前浏览器中，清除浏览器数据会删除；它们是历史位置，尚未确认现在是否仍在那里。');
 template=template.replace('本地程序没有准备好','网页没有准备好');
 template=template.replace('发送一张照片','查看当前画面');
-template=template.replace(/<form id="settings-form">[\s\S]*?<\/form>/,'<form id="settings-form"><p>千问连接由管理员在后台固定配置，无须填写密钥。同一浏览器通常 30 天内只需验证一次。</p><label for="access-code">访问码</label><input id="access-code" type="password" autocomplete="off" required placeholder="首次使用填写访问码"><button class="primary full-width" type="submit">连接</button><button id="clear-config" class="full-width" type="button">退出本设备</button></form>');
+template=template.replace(/<form id="settings-form">[\s\S]*?<\/form>/,'<form id="settings-form"><p>无需登录或填写访问码。点击“开始对话”，允许摄像头和麦克风后即可使用。千问密钥由管理员保存在后台。</p><button class="full-width" type="submit">检查连接</button></form>');
+template=template.replace('id="config-state"','id="config-state" tabindex="-1"');
 template=template.replace(/密钥仅保存在当前页面内存中。建立连接时经本站 Netlify 函数用于千问鉴权；程序不保存密钥，刷新后需重新填写。/,'千问密钥由管理员保存在 Netlify 后台，不会发送到网页。');
 template=template.replace('语音、视频识别效果及手机真机仍待测试；NFC 和房间定位尚未接入。','公网版使用浏览器实时通话。实际千问连接、摄像头及 iPhone 体验仍需真机验证；NFC 和房间定位尚未接入。');
 template=template.replace('<details class="disclosure"><summary>对话记录','<audio id="remote-audio" autoplay playsinline aria-label="助手语音" hidden></audio><details class="disclosure"><summary>对话记录');
