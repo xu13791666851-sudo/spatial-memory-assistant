@@ -120,7 +120,7 @@ $('wake-toggle').onclick=async()=>{if(wake.enabled){wake.disable();$('wake-state
 };
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&wake.enabled){wake.disable();$('wake-state').textContent='离开页面后，语音唤醒已关闭。';$('wake-toggle').textContent='启用语音唤醒（前台）';}});
 window.addEventListener('pagehide',()=>wake.disable());
-function syncPlace(place){$('place-mode').value=place;$('home-memory-section').hidden=place!=='home';}
+function syncPlace(place){$('place-mode').value=place;$('home-memory-section').hidden=place!=='home';try{renderMemories(place==='home'?runtime.memory.all():[]);}catch{notify('本机记忆暂时无法读取，请刷新后重试。');}}
 syncPlace(runtime.place());
 $('place-mode').onchange=()=>{try{const result=runtime.setPlace($('place-mode').value);syncPlace(result.place);if(!socket)localAnswer(result.answer);}catch(err){notify(err.message);syncPlace(runtime.place());}};
 try{const fast=localStorage.getItem('spatial-device-voice-v1');if(fast!==null)$('fast-describe').checked=fast==='true';}catch{}
