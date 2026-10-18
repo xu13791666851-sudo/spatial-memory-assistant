@@ -10,7 +10,7 @@ import {PERSON_CONTEXT_RULES} from './person-context.mjs';
 const tool=(name,description,properties={},required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
 const hasVideo=mode=>mode==='video'||mode==='assistant';
 const hasMemory=mode=>mode==='memory'||mode==='assistant';
-const memoryWrite=text=>/(?:保存|更新|补充|登记)/.test(text)||(!/(?:忘记|记过什么|记住了什么|记住的什么|之前记住|上次记住)/.test(text)&&/(?:记住|记下|记一下|记好|替我记|帮我记)/.test(text));
+const memoryWrite=text=>/(?:保存|更新|补充|登记)/.test(text)||(!/(?:忘记|记过什么|记住了什么|记住的什么|之前记住|上次记住)/.test(text)&&/(?:记住|记下|记一下|记好|替我记|帮我记|多记|一起记|都记|记录下|记一记)/.test(text));
 const memoryComplex=text=>{const c=rememberCommand(text);return memoryWrite(text)&&(!c||vagueName(c.name)||/[，,；;]|左|右|旁|靠|附近|前面|后面|里面|上方|下方/.test(c.location));};
 const memoryRecall=text=>/(?:之前|上次|以前|历史|记忆|记得|记过|记住过|记住的|刚才记)/.test(text)&&!/(?:记过什么|记住的什么|记住了什么|有哪些记忆|忘.*物品)/.test(text);
 export const INTRODUCTION='你好，我是你的智能助手。你可以先调整手机方向，准备好后问我“眼前有什么”，或告诉我你想找什么。';
@@ -18,7 +18,7 @@ export function sessionConfig(mode,place='explore',deviceVoice=false){
   const tools=[...(hasVideo(mode)?[tool('stop_video','用户要求关闭摄像头或停止观察时立即执行。')]:[]),...(hasMemory(mode)?[
     tool('query_memory','按名称或颜色、用途等描述查找历史记录；相近结果必须先询问用户是哪一件，不能擅自认定。',{name:{type:'string'}},['name']),
     tool('list_memories','用户忘记名称、想知道记过什么时列出候选，每次最多五件并询问是哪件。'),
-    tool('prepare_memory','用户明确要求记录、移动、更正或删除时准备操作，等待用户口头确认或页面确认。',{action:{type:'string',enum:['record','move','correct','delete']},name:{type:'string'},location:{type:'string'},event_time:{type:'string'}},['action','name'])]:[]),...(hasVideo(mode)?[
+    tool('prepare_memory','用户明确要求记录、移动、更正或删除时准备操作，等待用户口头确认或页面确认。',{action:{type:'string',enum:['record','move','correct','delete']},name:{type:'string'},location:{type:'string'},event_time:{type:'string'},appearance:{type:'string'},aliases:{type:'array',items:{type:'string'}},relations:{type:'array',items:{type:'object',properties:{reference:{type:'string'},relation:{type:'string'}},required:['reference','relation'],additionalProperties:false}},append:{type:'boolean'}},['action','name'])]:[]),...(hasVideo(mode)?[
     tool('request_observation','用户询问当前画面中的物品、人物、文字或要求再看、描述周围时，调用此工具开启或更新观察。等待工具返回可用画面后再回答。',{goal:{type:'string',description:'用户希望看的内容，例如找水杯；概括环境可留空。'}})]:[])];
   return {type:'session.update',session:{modalities:deviceVoice?['text']:['text','audio'],voice:'Tina',input_audio_format:'pcm',output_audio_format:'pcm',
     input_audio_transcription:{model:'qwen3-asr-flash-realtime'},turn_detection:{type:'semantic_vad',threshold:0.5,silence_duration_ms:800},
