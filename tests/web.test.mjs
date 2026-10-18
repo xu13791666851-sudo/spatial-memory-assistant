@@ -918,7 +918,7 @@ test('visible alias candidates cannot be reported as absent and historical posit
   const target=visualTarget({name:'小蓝',appearance:'蓝色带把手杯子',aliases:['马克杯','水杯'],location:'旧柜子',relations:[{reference:'旧闹钟',relation:'左边'}]});
   assert.ok(!JSON.stringify(target).includes('旧柜子'));assert.ok(!JSON.stringify(target).includes('旧闹钟'));
   const result=groundTarget({answer:'没看到小蓝。',objects:[{name:'蓝色马克杯',position:'电脑左侧'}],target_visible:false},target);
-  assert.equal(result.target_visible,null);assert.match(result.answer,/蓝色马克杯/);assert.match(result.answer,/还不能确认/);assert.ok(!result.answer.includes('没看到'));
+  assert.equal(result.target_visible,null);assert.match(result.answer,/蓝色马克杯/);assert.match(result.answer,/这是你记住/);assert.ok(!result.answer.includes('没看到'));
 });
 
 test('both voices request identical structured vision and retain all relation data',async()=>{
@@ -975,4 +975,11 @@ test('cancelling a semantic plan releases its scene so an unrelated new question
   bridge.event({type:'input_audio_buffer.speech_stopped'},bridge.channel);bridge.replyPending=false;bridge.listening=false;
   bridge.send(JSON.stringify({type:'text',text:'你好'}));assert.ok(sent.some(e=>e.type==='response.create'));
   finish(Response.json({action:'reply',answer:'过期回答'}));await settle();assert.equal(runtime.memory.pending,null);bridge.close();
+});
+
+
+test('conflicting colors do not turn a clearly visible blue cup into a choice between cup and green bottle',()=>{
+  const result={answer:'蓝色水杯在右侧。',target_visible:true,objects:[{name:'蓝色水杯',appearance:'蓝色带把手',aliases:['马克杯','杯子'],position:'桌面右侧'},{name:'绿色瓶子',appearance:'绿色长瓶',aliases:['保温杯','水瓶'],position:'桌面最右侧'}]};
+  const grounded=groundTarget(result,{name:'小蓝',appearance:'蓝色带把手的杯子',aliases:['水杯','马克杯','杯子']});
+  assert.equal(grounded.target_visible,true);assert.equal(grounded.answer,result.answer);
 });

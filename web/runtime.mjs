@@ -12,7 +12,7 @@ const hasVideo=mode=>mode==='video'||mode==='assistant';
 const hasMemory=mode=>mode==='memory'||mode==='assistant';
 const memoryWrite=text=>/(?:保存|更新|补充|登记)/.test(text)||(!/(?:忘记|记过什么|记住了什么|记住的什么|之前记住|上次记住)/.test(text)&&/(?:记住|记下|记一下|记好|替我记|帮我记)/.test(text));
 const memoryComplex=text=>{const c=rememberCommand(text);return memoryWrite(text)&&(!c||vagueName(c.name)||/[，,；;]|左|右|旁|靠|附近|前面|后面|里面|上方|下方/.test(c.location));};
-const memoryRecall=text=>/(?:之前|上次|以前|历史|记忆|记得|记过|记住过)/.test(text)&&!/(?:记过什么|记住的什么|记住了什么|有哪些记忆|忘.*物品)/.test(text);
+const memoryRecall=text=>/(?:之前|上次|以前|历史|记忆|记得|记过|记住过|记住的|刚才记)/.test(text)&&!/(?:记过什么|记住的什么|记住了什么|有哪些记忆|忘.*物品)/.test(text);
 export const INTRODUCTION='你好，我是你的智能助手。你可以先调整手机方向，准备好后问我“眼前有什么”，或告诉我你想找什么。';
 export function sessionConfig(mode,place='explore',deviceVoice=false){
   const tools=[...(hasVideo(mode)?[tool('stop_video','用户要求关闭摄像头或停止观察时立即执行。')]:[]),...(hasMemory(mode)?[
@@ -90,7 +90,7 @@ export function createRuntime(env){
       if(!complex&&!memoryRecall(text)&&!this.semanticFollowup)return false;
       if(!complex&&currentViewIntent(text))return false;
       const command=rememberCommand(text);
-      const fresh=complex&&hasVideo(this.mode)&&(!command||vagueName(command.name))&&!/^(?:补充|更新)/.test(text);
+      const fresh=complex&&hasVideo(this.mode)&&(!command||vagueName(command.name))&&!(/(?:补充|更新)/.test(text)&&!/(?:画面|眼前|镜头)/.test(text));
       companion.pending=null;memory.pending=null;
       if(fresh){this.memoryCapture={text};this.requestCurrentView(text,true);return true;}
       void this.planMemory(text);return true;
@@ -124,6 +124,7 @@ export function createRuntime(env){
       if(!result)return false;
       if(result.observe){context.note(result.goal);this.requestCurrentView(result.goal);return true;}
       if(result.focus)context.focus=result.focus;
+      if(result.saved)context.focus=memory.last;
       this.suppressResponse=true;this.queuedReply=null;this.replyPending=false;this.heldEvents=[];
       this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.scene.stop();
       this.localSpeechToken=null;this.visualPending=false;this.emit({type:'app.scene_cancel'});
@@ -506,7 +507,7 @@ export function createRuntime(env){
       }
       if(path==='/api/confirm'){
         if(context.place!=='home')throw Error('请先切换到家中场景。');
-        if(!body.cancel&&memory.pending?.sceneAt&&(!activeBridge?.videoId||activeBridge.currentScene?.observedAt!==memory.pending.sceneAt||Date.now()-Date.parse(memory.pending.sceneAt)>60000))throw Error('画面已变化或过期，请重新看一下再保存。');
+        if(!body.cancel&&memory.pending?.sceneAt&&(!activeBridge?.videoId||activeBridge.currentScene?.observedAt!==memory.pending.sceneAt||Date.now()-Date.parse(memory.pending.sceneAt)>300000))throw Error('画面已变化或过期，请重新看一下再保存。');
         return memory.confirm(body.token,body.cancel);
       }
       throw Error('这个操作不支持。');

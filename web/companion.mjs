@@ -58,7 +58,7 @@ export class MemoryCompanion{
     }else if(p&&/^(?:重新看|再看|找|帮我找|记住|停止|结束)/.test(value))this.pending=null;
     if(this.memory.pending&&(yes(text)||no(text))){
       const pending=this.memory.pending;
-      if(!no(text)&&pending.sceneAt&&(!cameraActive||!scene||scene.observedAt!==pending.sceneAt||this.clock()-Date.parse(pending.sceneAt)>60000)){this.memory.pending=null;return this.memory.result('画面已变化或过期，请重新看一下再保存。');}
+      if(!no(text)&&pending.sceneAt&&(!cameraActive||!scene||scene.observedAt!==pending.sceneAt||this.clock()-Date.parse(pending.sceneAt)>300000)){this.memory.pending=null;return this.memory.result('画面已变化或过期，请重新看一下再保存。');}
       return this.memory.confirm(pending.token,no(text));
     }
     if(/(?:记过什么|记住过什么|记住了什么|记住的什么|记了什么|有哪些记忆|有什么记录|列出.*记忆|忘.*(?:物品|名字|名称|叫什么)|不记得.*(?:名字|名称|记过))/.test(value))return this.choose('');
