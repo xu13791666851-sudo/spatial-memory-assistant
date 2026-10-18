@@ -21,6 +21,7 @@ export function applyConversationLayout(js,template){
   js=js.replace('let voiceGeneration=0,','let greetOnReady=false;\nlet voiceGeneration=0,');
   js=js.replace("if(PAGE==='video'&&!ready){if(!await startVoice())return;}","if(!ready&&configured){if(!await startVoice({greet:false}))return;}");
   js=js.replace("stateUI('正在听你说话');}break;", "stateUI('正在听你说话');if(greetOnReady){greetOnReady=false;const greeting='你好，我是小忆。现在可以和我说话了。';bubble(greeting);showAnswer(greeting);if(!$('screen-reader-mode').checked)socket?.replayAnswer(greeting);}}break;");
+  js=js.replace("case 'app.usage':","case 'app.usage':if(ready&&!paused&&!socket?.localSpeechToken)$('voice-state').textContent='正在听你说话';");
   js=js.replace("case 'app.video_error':await stopCamera(event.message+' 摄像头已关闭。');notify(event.message);break;", "case 'app.video_error':await stopCamera(event.message+' 摄像头已关闭。');bubble(event.message+' 语音对话仍可继续，点击“重新观察”可以重试。');notify(event.message,0);break;");
   js="import {ConversationView} from './conversation.mjs';\n"+js;
   js=js.replace(/function bubble\(text,user=false\)\{[^\n]*\}/,'function bubble(text,user=false,meta={}){return conversation.add(text,user,meta);}')
