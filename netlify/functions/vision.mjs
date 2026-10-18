@@ -55,7 +55,7 @@ export async function understand(request,fetcher=fetch,env=process.env){
     const step=result.next_step;
     const nextStep=task&&step?.kind==='reframe'&&knownAnchor(step.anchor)&&short(step.question,100)?{kind:'reframe',anchor:step.anchor,question:step.question}:null;
     return reply({answer:result.answer.trim(),objects,target_visible:targetVisible,...(task?{memory_candidate:candidate,next_step:nextStep}:{}),source:'current_camera_frame',observedAt:new Date().toISOString()});
-  }catch{return reply({detail:'当前画面的理解没有完成，请重新观察。'},502);}
+  }catch(err){return reply({detail:signal.aborted?'画面理解等待超时，请点击重新观察。':err instanceof SyntaxError?'视觉模型返回的内容格式不完整，请点击重新观察。':'当前画面的理解没有完成，请重新观察。',code:signal.aborted?'vision_timeout':err instanceof SyntaxError?'vision_invalid_json':err instanceof TypeError?'vision_network_error':'vision_invalid_result'},502);}
 }
 export default request=>understand(request);
 export const config={path:'/api/vision',method:'POST',rateLimit:{windowLimit:10,windowSize:60,aggregateBy:['ip','domain']}};

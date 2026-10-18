@@ -15,6 +15,13 @@ export function applyConversationLayout(js,template){
   if(actionsEnd<0)throw Error('Missing primary actions');
   template=template.slice(0,actionsEnd+6)+'<button id="end-conversation" type="button" hidden>结束对话</button></div>'+template.slice(actionsEnd+6);
   template=template.replace('</main>','</main><dialog id="delete-chat-dialog" aria-labelledby="delete-chat-title"><h2 id="delete-chat-title">删除这次对话？</h2><p>只删除本机文字对话，不影响已经记住的物品位置。</p><div class="two-buttons"><button id="delete-chat-cancel" type="button">取消</button><button id="delete-chat-confirm" type="button">删除对话</button></div></dialog>');
+  // The greeting is sent only after both Qwen and microphone are ready.
+  template=template.replace('<p>开始对话，或用文字告诉我你想找什么。</p>','<p>你好，我是小忆。点击“开始对话”，允许摄像头和麦克风后，就可以和我说话。</p>');
+  template=template.replace('<button id="video-again" hidden>再观察一次</button>','').replace('<p>点击开始，查看周围</p>','<p>点击开始，查看周围</p><button id="video-again" type="button" hidden>重新观察</button>');
+  js=js.replace('let voiceGeneration=0,','let greetOnReady=false;\nlet voiceGeneration=0,');
+  js=js.replace("if(PAGE==='video'&&!ready){if(!await startVoice())return;}","if(!ready&&configured){if(!await startVoice({greet:false}))return;}");
+  js=js.replace("stateUI('正在听你说话');}break;", "stateUI('正在听你说话');if(greetOnReady){greetOnReady=false;const greeting='你好，我是小忆。现在可以和我说话了。';bubble(greeting);showAnswer(greeting);if(!$('screen-reader-mode').checked)socket?.replayAnswer(greeting);}}break;");
+  js=js.replace("case 'app.video_error':await stopCamera(event.message+' 摄像头已关闭。');notify(event.message);break;", "case 'app.video_error':await stopCamera(event.message+' 摄像头已关闭。');bubble(event.message+' 语音对话仍可继续，点击“重新观察”可以重试。');notify(event.message,0);break;");
   js="import {ConversationView} from './conversation.mjs';\n"+js;
   js=js.replace(/function bubble\(text,user=false\)\{[^\n]*\}/,'function bubble(text,user=false,meta={}){return conversation.add(text,user,meta);}')
     .replace('function localAnswer(text){lastAnswer=text;bubble(text);','function localAnswer(text,meta={}){lastAnswer=text;bubble(text,false,meta);')
@@ -36,11 +43,12 @@ export function applyConversationLayout(js,template){
     .replace('lastAnswer=text;bubble(text);',"lastAnswer=text;if(streamed&&sceneMessageKey)conversation.stream(sceneMessageKey,text,{done:true,meta});else bubble(text,false,meta);sceneMessageKey=null;");
   js=js.replace("if(event.transcript){bubble(event.transcript,true);","if(event.transcript){conversation.finishDrafts();bubble(event.transcript,true);");
   js=js.replace('function startVoice(){','function startVoice(options={}){')
-    .replace('const attempt=++voiceGeneration;',"if(!options.replay)conversation.begin();\n const attempt=++voiceGeneration;")
+    .replace('const attempt=++voiceGeneration;',"greetOnReady=!options.replay&&options.greet!==false;if(!options.replay)conversation.begin();\n const attempt=++voiceGeneration;")
     .replace('if(!await startVoice())return;}\n  stopPlayback();socket?.replayAnswer(text);','if(!await startVoice({replay:true}))return;}\n  stopPlayback();socket?.replayAnswer(text);')
     .replace('async function stop(){voiceGeneration++;','async function stop(){conversation.end();voiceGeneration++;');
   js=js.replace("$('main-toggle').textContent=active?(ready?'结束对话':'取消开启'):('开始对话')", "$('main-toggle').textContent=active?(ready?(paused?'继续对话':'暂停对话'):'取消开启'):'开始对话'");
   js=js.replace("$('main-toggle').classList.toggle('active',active);", "$('main-toggle').classList.toggle('active',active);$('end-conversation').hidden=!active;");
+  js=js.replace("$('video-again').onclick=startVideo;","$('video-again').onclick=()=>startVideo();");
   js=js.replace("$('main-toggle').onclick=async()=>{if(sessionActive())await stop();", "$('main-toggle').onclick=async()=>{if(ready){$('pause').click();return;}if(sessionActive())await stop();");
   // Construct history before the bootstrap IIFE can render an offline response.
   const marker="(async()=>{try{const status=window.spatialRuntime.status();";

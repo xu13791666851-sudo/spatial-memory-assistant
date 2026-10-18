@@ -42,3 +42,6 @@ body[data-layout=video] #conversation-panel{display:none}
 body[data-layout=video] .answer-card{display:block}
 @media(min-width:800px) and (min-height:550px){body[data-page=assistant] .session{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:minmax(0,1fr) auto;gap:16px}body[data-page=assistant] .camera-panel{grid-column:1;grid-row:1;max-height:none;min-height:0}#conversation-panel{grid-column:2;grid-row:1}.conversation-footer{grid-column:1/-1;grid-row:2}body[data-layout=video] .camera-panel{grid-column:1/-1}body[data-layout=video] .answer-card{grid-column:1/-1;grid-row:2;max-height:160px}body[data-layout=video] .conversation-footer{grid-row:3}body[data-layout=history] .session{grid-template-columns:1fr 2fr}}
 @media(max-height:570px){body[data-page=assistant] .camera-panel{flex-basis:95px;min-height:70px}.chat-heading{display:none}.chat-history-tools{margin:0}body[data-page=assistant] main{gap:4px}#dialogue-state{display:none}#end-conversation{top:5px}body[data-layout=video] .camera-panel{flex:1}.conversation-footer{padding-top:2px}}
+
+/* The injected preview feedback drawer otherwise covers the mobile controls. */
+body[data-page=assistant] > [data-netlify-deploy-id]{display:none!important}
