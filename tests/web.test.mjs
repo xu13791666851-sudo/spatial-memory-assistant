@@ -704,3 +704,9 @@ test('default cloud reading of a complete memory receipt does not wait for scene
   const {bridge,sent}=visualFixture();bridge.pendingInstructions=true;
   bridge.replayAnswer('已记住：杯子在木桌上。');assert.ok(sent.some(e=>e.type==='response.create'));bridge.close();
 });
+
+test('short name matching does not confuse an object with its accessory',()=>{
+  const m=new Memory(storage());m.remember('记住，钥匙扣放在桌上');m.remember('记住，蓝色杯子套放在柜子里');
+  assert.equal(m.get('钥匙'),null);assert.equal(m.get('杯子'),null);
+  m.remember('记住，蓝色玻璃杯放在桌上');assert.equal(m.get('蓝色杯').name,'蓝色玻璃杯');
+});
