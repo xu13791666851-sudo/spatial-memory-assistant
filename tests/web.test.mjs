@@ -1,3 +1,5 @@
+import {EventEmitter} from 'node:events';
+import {freshSdp} from '../netlify/lib/fresh-sdp.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Memory,rememberCommand} from '../web/memory.mjs';
@@ -835,4 +837,35 @@ test('cancelling a connection prevents retries and keeps the client wait longer 
   const result=await exchange(r,async()=>{calls++;controller.abort();throw new DOMException('aborted','AbortError');},serverEnv);
   assert.equal(calls,1);assert.equal((await result.json()).error_code,'CLIENT_CANCELLED');
   const app=readFileSync(new URL('../dist/static/app.js',import.meta.url),'utf8');assert.match(app,/voiceTimer=setTimeout[\s\S]*?45000/);
+});
+
+
+test('fresh SDP transport disables pooled sockets, uses IPv4 and preserves certificate verification',async()=>{
+  const payload='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n';let optionsSeen;
+  const r=await freshSdp('https://example.invalid/realtime',{body:payload,headers:{Authorization:'Bearer '+key}},(url,options,callback)=>{
+    optionsSeen=options;const req=new EventEmitter();req.end=body=>{assert.equal(body,payload);queueMicrotask(()=>{const socket=new EventEmitter();req.emit('socket',socket);socket.emit('lookup');socket.emit('connect');socket.emit('secureConnect');const res=new EventEmitter();res.statusCode=200;res.headers={};callback(res);res.emit('data',Buffer.from(payload));res.emit('end');});};return req;
+  });
+  assert.equal(await r.text(),payload);assert.equal(optionsSeen.agent,false);assert.equal(optionsSeen.family,4);assert.equal(optionsSeen.headers.Connection,'close');assert.equal(optionsSeen.headers['Content-Length'],String(Buffer.byteLength(payload)));assert.notEqual(optionsSeen.rejectUnauthorized,false);
+});
+
+test('fresh SDP transport rejects oversized answers, does not follow redirects and propagates the abort signal',async()=>{
+  const signal=new AbortController().signal;
+  for(const status of [302,200]){
+    let connections=0,destroyed=false;
+    const promise=freshSdp('https://example.invalid/realtime',{signal},(url,options,callback)=>{
+      connections++;assert.equal(options.signal,signal);const req=new EventEmitter();req.destroy=()=>{destroyed=true;};req.end=()=>queueMicrotask(()=>{const res=new EventEmitter();res.headers={};res.statusCode=status;res.destroy=()=>{destroyed=true;};callback(res);res.emit('data',Buffer.from(status===200?'a'.repeat(160001):'redirect'));res.emit('end');});return req;
+    });
+    if(status===200){await assert.rejects(promise,/too large/);assert.equal(destroyed,true);}else assert.equal((await promise).status,302);
+    assert.equal(connections,1);
+  }
+  await assert.rejects(()=>freshSdp('http://example.invalid',{}),/Invalid connection target/);
+});
+
+test('fresh SDP transport identifies whether a connection stalled before TCP or after TLS',async()=>{
+  for(const [events,phase] of [[[],'dns'],[['lookup'],'tcp'],[['lookup','connect'],'tls'],[['lookup','connect','secureConnect'],'response']]){
+    const promise=freshSdp('https://example.invalid/realtime',{},(url,options,callback)=>{
+      const req=new EventEmitter();req.end=()=>queueMicrotask(()=>{const socket=new EventEmitter();req.emit('socket',socket);events.forEach(e=>socket.emit(e));const error=new DOMException('aborted','AbortError');req.emit('error',error);});return req;
+    });
+    await assert.rejects(promise,error=>error.connectionPhase===phase);
+  }
 });
