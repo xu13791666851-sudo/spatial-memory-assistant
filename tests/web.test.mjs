@@ -4,7 +4,7 @@ import {Memory,rememberCommand} from '../web/memory.mjs';
 import {MemoryCompanion} from '../web/companion.mjs';
 import {SessionContext,placeIntent} from '../web/context.mjs';
 import {createRuntime,sessionConfig} from '../web/runtime.mjs';
-import {exchange} from '../netlify/functions/realtime-sdp.mjs';
+import {exchange,connectionFailure} from '../netlify/functions/realtime-sdp.mjs';
 import {access} from '../netlify/functions/access.mjs';
 import {serverReady} from '../netlify/lib/access.mjs';
 import {ObservationGate,observationCommand,asksHistory,currentViewIntent} from '../web/interaction.mjs';
@@ -802,4 +802,37 @@ test('published controls default to five minutes and provide ten minutes',()=>{
   const html=readFileSync(new URL('../dist/video/index.html',import.meta.url),'utf8');
   assert.match(html,/<option value="300" selected>5 分钟/);assert.match(html,/<option value="600">10 分钟/);
   assert.ok(!html.includes('摄像头默认 2 分钟'));
+});
+
+
+test('realtime retries a transient connect timeout once, preserving the offer and credential boundary',async()=>{
+  let calls=0;const offer=config.sdp;
+  const response=await exchange(request(config),async(url,options)=>{
+    calls++;assert.equal(options.body,offer);assert.equal(options.redirect,'error');assert.equal(options.headers.Authorization,'Bearer '+key);
+    if(calls===1)throw new TypeError('fetch failed',{cause:{code:'UND_ERR_CONNECT_TIMEOUT',message:key}});
+    return new Response('v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n');
+  },serverEnv);
+  assert.equal(calls,2);assert.equal(response.status,200);assert.ok(!(await response.text()).includes(key));
+});
+
+test('persistent network failures are bounded and return a safe category without provider details',async()=>{
+  for(const [cause,code] of [['UND_ERR_CONNECT_TIMEOUT','UPSTREAM_TIMEOUT'],['ENOTFOUND','UPSTREAM_DNS'],['ECONNRESET','UPSTREAM_NETWORK']]){
+    let calls=0;const response=await exchange(request(config),async()=>{calls++;throw new TypeError(key,{cause:{code:cause,hostname:'secret-workspace.example',message:key}});},serverEnv);
+    const body=await response.text();assert.equal(calls,2);assert.equal(JSON.parse(body).error_code,code);assert.equal(JSON.parse(body).attempts,2);assert.ok(!body.includes(key));assert.ok(!body.includes('secret-workspace'));
+  }
+});
+
+test('authentication, TLS and invalid answers are never retried as transient transport failures',async()=>{
+  for(const make of [()=>Response.json({code:'InvalidApiKey'},{status:401}),()=>{throw new TypeError(key,{cause:{code:'CERT_HAS_EXPIRED'}});},()=>new Response('invalid answer')]){
+    let calls=0;const r=await exchange(request(config),async()=>{calls++;return make();},serverEnv);assert.equal(calls,1);assert.ok(r.status>=400);assert.ok(!(await r.text()).includes(key));
+  }
+  assert.equal(connectionFailure(new TypeError('x',{cause:{errors:[{code:'ETIMEDOUT'}]}})),'UPSTREAM_TIMEOUT');
+});
+
+test('cancelling a connection prevents retries and keeps the client wait longer than the retry budget',async()=>{
+  const controller=new AbortController();let calls=0;
+  const r=new Request('https://example.netlify.app/api/realtime/sdp',{method:'POST',headers:{Origin:'https://example.netlify.app'},body:JSON.stringify(config),signal:controller.signal});
+  const result=await exchange(r,async()=>{calls++;controller.abort();throw new DOMException('aborted','AbortError');},serverEnv);
+  assert.equal(calls,1);assert.equal((await result.json()).error_code,'CLIENT_CANCELLED');
+  const app=readFileSync(new URL('../dist/static/app.js',import.meta.url),'utf8');assert.match(app,/voiceTimer=setTimeout[\s\S]*?45000/);
 });

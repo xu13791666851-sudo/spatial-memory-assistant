@@ -53,6 +53,7 @@ js=js.replace('本地程序没有准备好，请刷新或重新启动。','网�
 js=js.replace("await stop();notify('连接已结束，麦克风和摄像头已关闭。');","await stop();if($('notice').hidden)notify('连接已结束，麦克风和摄像头已关闭。');");
 js=js.replace("import {runtime} from './runtime.mjs';","import {runtime} from './runtime.mjs';\nimport {ForegroundWake} from './wake.mjs';\nimport {SceneSpeech} from './scene-speech.mjs';\nlet sceneSpeech=null,sceneText='';");
 js=js.replace('function startVoice(){','function startVoice(){\n wake.suspend();');
+js=js.replace("notify('连接等待超时，请重新开始。');stop();}},30000)","notify('连接等待超时，请重新开始。');stop();}},45000)");
 js=js.replace('bubble(text,true);if(ready){','bubble(text,true);if(ready){stopPlayback();');
 js=js.replace(/function speak\(text\)\{[^\n]*\}/,`function speak(text){
  if($('screen-reader-mode').checked){$('answer-live').textContent=text;return;}
