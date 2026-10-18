@@ -1,9 +1,15 @@
+import {planMemory} from '../netlify/functions/memory-plan.mjs';
+import {visualTarget,groundTarget} from '../web/visual-grounding.mjs';
+import {describeRecord} from '../web/spatial-record.mjs';
+import {EventEmitter} from 'node:events';
+import {freshSdp} from '../netlify/lib/fresh-sdp.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Memory,rememberCommand} from '../web/memory.mjs';
+import {MemoryCompanion} from '../web/companion.mjs';
 import {SessionContext,placeIntent} from '../web/context.mjs';
 import {createRuntime,sessionConfig} from '../web/runtime.mjs';
-import {exchange} from '../netlify/functions/realtime-sdp.mjs';
+import {exchange,connectionFailure} from '../netlify/functions/realtime-sdp.mjs';
 import {access} from '../netlify/functions/access.mjs';
 import {serverReady} from '../netlify/lib/access.mjs';
 import {ObservationGate,observationCommand,asksHistory,currentViewIntent} from '../web/interaction.mjs';
@@ -172,19 +178,21 @@ test('late microphone attachment is stopped after cancellation',async()=>{
   let stopped=false;await assert.rejects(()=>bridge.attachAudio({getTracks:()=>[{stop(){stopped=true;}}]}));assert.equal(stopped,true);
 });
 
-test('microphone attachment waits for outgoing audio before permitting video startup',async()=>{
+test('microphone attachment verifies outgoing audio',async()=>{
   const {runtime}=runtimeFixture();const bridge=new runtime.Bridge();bridge.configured=true;
   const track={readyState:'live'};let attached=false,reads=0;
   bridge.audioSender={replaceTrack:async()=>{attached=true;},getStats:async()=>{reads++;return new Map([['audio',{type:'outbound-rtp',kind:'audio',bytesSent:attached?100:0}]]);}};
   await bridge.attachAudio({getAudioTracks:()=>[track],getTracks:()=>[track]});
   assert.equal(attached,true);assert.ok(reads>=2);bridge.close();
 });
-test('native video uses a clone and stopping it leaves local preview capture owned by UI',async()=>{
+test('observation uses local preview without cloning or transmitting a video track',async()=>{
   const {runtime,preview}=runtimeFixture();const bridge=new runtime.Bridge();bridge.mode='video';bridge.configured=true;
-  let cloneStopped=false,sourceStopped=false;
-  preview.srcObject={getVideoTracks:()=>[{readyState:'live',stop(){sourceStopped=true;},clone:()=>({stop(){cloneStopped=true;}})}]};
-  bridge.videoSender={replaceTrack:async()=>{},getParameters:()=>({encodings:[]})};
-  await bridge.attachVideo();bridge.clearVideoTrack();assert.equal(cloneStopped,true);assert.equal(sourceStopped,false);bridge.close();
+  let sourceStopped=false;
+  const source={readyState:'live',stop(){sourceStopped=true;},clone:()=>assert.fail('must not encode a duplicate video stream')};
+  preview.srcObject={getVideoTracks:()=>[source]};
+  bridge.videoSender={replaceTrack:async()=>assert.fail('must not upload continuous video')};
+  await bridge.attachVideo();assert.equal(bridge.previewTrack,source);
+  bridge.clearVideoTrack();assert.equal(bridge.previewTrack,null);assert.equal(sourceStopped,false);bridge.close();
 });
 test('session tools keep visual and memory permissions separate',()=>{
   assert.deepEqual(sessionConfig('video').session.tools.map(t=>t.function.name),['stop_video','request_observation']);
@@ -247,12 +255,11 @@ test('offline text command saves in home without a pending confirmation',async()
   assert.equal(runtime.memory.get('眼镜').location,'床头柜上');
 });
 
-test('combined session supports native video without stopping the original preview track',async()=>{
+test('stopping observation leaves preview cleanup to the UI and keeps voice connected',async()=>{
   const {runtime,preview}=runtimeFixture();const bridge=new runtime.Bridge();bridge.mode='assistant';bridge.configured=true;
-  let stopped=false;preview.srcObject={getVideoTracks:()=>[{readyState:'live',clone:()=>({stop(){stopped=true;}})}]};
-  bridge.videoSender={replaceTrack:async()=>{},getParameters:()=>({encodings:[]})};
+  let stopped=false;preview.srcObject={getVideoTracks:()=>[{readyState:'live',stop(){stopped=true;},clone:()=>assert.fail('no duplicate video track')}]};
   await bridge.attachVideo();bridge.endVideo('观察结束，语音继续');
-  assert.equal(stopped,true);assert.equal(bridge.closed,false);bridge.close();
+  assert.equal(stopped,false);assert.equal(bridge.previewTrack,null);assert.equal(bridge.closed,false);bridge.close();
 });
 
 class TestGate{
@@ -273,16 +280,136 @@ const visualFixture=(options={})=>{
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 const toolCall=(bridge,name,args,id)=>bridge.event({type:'response.done',response:{output:[{type:'function_call',call_id:id,name,arguments:JSON.stringify(args)}]}},bridge.channel);
 
+test('realtime connection negotiates audio only while visual questions use snapshots',async()=>{
+  const kinds=[];
+  class Peer{
+    constructor(){this.iceGatheringState='complete';}
+    addTransceiver(kind){kinds.push(kind);return {sender:{}};}
+    createDataChannel(){return {};}
+    async createOffer(){return {type:'offer',sdp:'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n'};}
+    async setLocalDescription(value){this.localDescription=value;}
+    async setRemoteDescription(value){this.remoteDescription=value;}
+    close(){}
+  }
+  const {runtime}=runtimeFixture({RTCPeerConnection:Peer,fetch:async(url,options)=>{
+    if(url==='/api/access')return Response.json({configured:true,authenticated:true});
+    assert.equal(url,'/api/realtime/sdp');assert.ok(!JSON.parse(options.body).sdp.includes('m=video'));
+    return new Response('v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n');
+  }});
+  const bridge=new runtime.Bridge();bridge.mode='assistant';await bridge.connect();
+  assert.deepEqual(kinds,['audio']);assert.equal(bridge.pc.remoteDescription.type,'answer');bridge.close();
+});
+
+test('snapshot request starts before voice cancellation finishes and is sent only once',async()=>{
+  let finish,calls=0,tick=100;
+  const {bridge,events}=visualFixture({now:()=>tick,fetch:async url=>{
+    if(url==='/api/access')return Response.json({configured:true,authenticated:true});
+    assert.equal(url,'/api/vision');calls++;return await new Promise(resolve=>finish=resolve);
+  }});
+  bridge.active=true;bridge.replyPending=true;
+  bridge.send(JSON.stringify({type:'video_start',observe:true,id:'parallel-view',duration:30}));await settle();bridge.scene.config.onReady();await settle();
+  assert.equal(calls,1);assert.ok(events.some(e=>e.type==='app.scene_loading'));
+  bridge.event({type:'response.done',response:{status:'cancelled'}},bridge.channel);await settle();assert.equal(calls,1);
+  tick=850;finish(Response.json({answer:'画面中有一只杯子。',objects:[]}));await settle();
+  assert.equal(events.find(e=>e.type==='app.scene_ready').durationMs,750);
+  assert.equal(events.filter(e=>e.type==='app.scene_fallback').length,1);bridge.close();
+});
+
+test('common overview and hand questions route directly to a fresh image request',()=>{
+  const {bridge,events,sent}=visualFixture();
+  for(const text of ['眼前有什么','我面前有什么？','我手里拿着什么？']){
+    bridge.send(JSON.stringify({type:'text',text}));
+    assert.equal(events.at(-1).type,'app.observe');
+  }
+  assert.equal(events[0].goal,'');assert.equal(events[1].goal,'');
+  assert.equal(events[2].goal,'我手里拿着什么？');
+  assert.equal(sent.filter(e=>e.type==='response.create').length,0);
+  assert.equal(currentViewIntent('之前记录的杯子在哪里'),null);bridge.close();
+});
+
+test('startup greets once without capturing an image and waits for a user question',async()=>{
+  let captures=0;
+  const {bridge,events}=visualFixture({captureFrame:()=>{captures++;return '/9j/latest-frame';}});
+  bridge.send(JSON.stringify({type:'video_start',id:'greeting-first',duration:120}));await settle();
+  assert.equal(bridge.scene.config,null);assert.equal(captures,0);
+  const intro=events.filter(e=>e.type==='app.introduction');assert.equal(intro.length,1);assert.match(intro[0].answer,/先调整手机方向/);
+  assert.ok(!events.some(e=>e.type==='app.scene_loading'||e.type==='app.scene_ready'));
+  bridge.send(JSON.stringify({type:'text',text:'你好'}));assert.equal(bridge.scene.config,null);assert.equal(captures,0);
+  bridge.send(JSON.stringify({type:'text',text:'眼前有什么？'}));assert.ok(bridge.scene.config);
+  bridge.scene.config.onReady();await settle();assert.equal(captures,1);assert.ok(events.some(e=>e.type==='app.scene_fallback'));
+  bridge.endVideo('停止观察');bridge.send(JSON.stringify({type:'video_start',id:'same-session',duration:120}));await settle();
+  assert.equal(events.filter(e=>e.type==='app.introduction').length,1);assert.equal(captures,1);bridge.close();
+});
+
+test('a visual question asked during camera startup is retained and skips the introduction',async()=>{
+  let question='';
+  const {bridge,events}=visualFixture({fetch:async(url,options)=>{
+    if(url==='/api/access')return Response.json({configured:true,authenticated:true});
+    question=JSON.parse(options.body).goal;return Response.json({answer:'水杯在电脑左侧。',objects:[]});
+  }});
+  bridge.send(JSON.stringify({type:'text',text:'水杯在哪里？'}));assert.equal(bridge.pendingObservation,true);
+  bridge.send(JSON.stringify({type:'video_start',id:'early-question',duration:120}));await settle();
+  assert.equal(bridge.pendingObservation,false);assert.ok(bridge.scene.config);assert.ok(!events.some(e=>e.type==='app.introduction'));
+  bridge.scene.config.onReady();await settle();assert.equal(question,'水杯在哪里？');assert.ok(events.some(e=>e.type==='app.scene_fallback'));bridge.close();
+});
+
+test('explicit observe and wake-with-goal requests still capture without an extra greeting',async()=>{
+  for(const options of [{observe:true},{goal:'找水杯'}]){
+    const {bridge,events}=visualFixture();
+    bridge.send(JSON.stringify({type:'video_start',id:'explicit-view',duration:120,...options}));await settle();
+    assert.ok(bridge.scene.config);assert.ok(!events.some(e=>e.type==='app.introduction'));
+    bridge.scene.config.onReady();await settle();assert.ok(events.some(e=>e.type==='app.scene_fallback'));bridge.close();
+  }
+});
+
+test('greeting never interrupts a user already speaking and a bare wake word does not capture',async()=>{
+  const {bridge,events}=visualFixture();bridge.event({type:'input_audio_buffer.speech_started'},bridge.channel);
+  bridge.send(JSON.stringify({type:'video_start',id:'speaking-first',duration:120}));await settle();
+  assert.ok(!events.some(e=>e.type==='app.introduction'));assert.equal(bridge.scene.config,null);
+  assert.equal(currentViewIntent('小忆'),null);assert.equal(observationCommand('小忆你好'),null);bridge.close();
+});
+
+test('cancelled startup cannot play a late introduction',async()=>{
+  const {bridge,events}=visualFixture();let finish;
+  bridge.attachVideo=()=>new Promise(resolve=>finish=resolve);
+  bridge.send(JSON.stringify({type:'video_start',id:'cancel-greeting',duration:120}));bridge.close();finish();await settle();
+  assert.ok(!events.some(e=>e.type==='app.introduction'));
+});
+
+test('reading a complete visual answer does not wait for a scene-context acknowledgement',async()=>{
+  const {bridge,events,sent}=visualFixture();
+  bridge.send(JSON.stringify({type:'video_start',observe:true,id:'read-now',duration:30}));await settle();bridge.scene.config.onReady();await settle();
+  assert.equal(bridge.pendingInstructions,true);
+  const answer=events.find(e=>e.type==='app.scene_fallback').answer;
+  bridge.replayAnswer(answer);
+  assert.equal(sent.filter(e=>e.type==='response.create').length,1);
+  assert.ok(sent.some(e=>e.item?.content?.[0]?.text.includes(answer)));
+  bridge.event({type:'session.updated'},bridge.channel);
+  assert.equal(sent.filter(e=>e.type==='response.create').length,1);bridge.close();
+});
+
+test('delayed context acknowledgement does not silently discard a queued user reply',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const {bridge,sent}=visualFixture();
+  bridge.send(JSON.stringify({type:'video_start',observe:true,id:'context-delay',duration:30}));await settle();bridge.scene.config.onReady();await settle();
+  bridge.requestReply('请根据这次画面继续回答。');
+  assert.equal(sent.filter(e=>e.type==='response.create').length,0);
+  t.mock.timers.tick(6000);
+  assert.equal(sent.filter(e=>e.type==='response.create').length,1);
+  bridge.event({type:'session.updated'},bridge.channel);
+  assert.equal(sent.filter(e=>e.type==='response.create').length,1);bridge.close();
+});
+
 test('two and five minute observations are accepted and preserve manual stop',async()=>{
-  for(const duration of [120,300]){
-    const {bridge}=visualFixture();bridge.send(JSON.stringify({type:'video_start',id:'long-view',duration}));await settle();
+  for(const duration of [120,300,600]){
+    const {bridge}=visualFixture();bridge.send(JSON.stringify({type:'video_start',observe:true,id:'long-view',duration}));await settle();
     assert.equal(bridge.videoId,'long-view');bridge.send(JSON.stringify({type:'video_stop',id:'long-view'}));
     assert.equal(bridge.videoId,null);assert.equal(bridge.closed,false);bridge.close();
   }
 });
 
 test('long frame timers continue past 30 seconds and stop exactly at their configured deadline',()=>{
-  for(const duration of [120,300]){
+  for(const duration of [120,300,600]){
     let now=0,nextId=0,stops=0,frames=0;const tasks=new Map();
     const add=(fn,delay,interval=0)=>{const id=++nextId;tasks.set(id,{fn,at:now+delay,interval});return id;};
     const context={module:{exports:{}},performance:{now:()=>now},setTimeout:(fn,ms)=>add(fn,ms),clearTimeout:id=>tasks.delete(id),setInterval:(fn,ms)=>add(fn,ms,ms),clearInterval:id=>tasks.delete(id)};
@@ -295,9 +422,9 @@ test('long frame timers continue past 30 seconds and stop exactly at their confi
   }
 });
 
-test('automatic scene description answers locally as soon as the frame is understood',async()=>{
+test('requested scene description answers as soon as the fresh frame is understood',async()=>{
   const {bridge,sent,events}=visualFixture();
-  bridge.send(JSON.stringify({type:'video_start',id:'scene-one',duration:30}));await settle();
+  bridge.send(JSON.stringify({type:'video_start',observe:true,id:'scene-one',duration:30}));await settle();
   assert.equal(sent.filter(e=>e.type==='response.create').length,0);
   bridge.scene.config.onReady();
   await settle();
@@ -309,8 +436,8 @@ test('automatic scene description answers locally as soon as the frame is unders
   assert.match(events.find(e=>e.type==='app.scene_fallback').answer,/水杯在电脑左侧/);bridge.close();
 });
 
-test('spoken input suppresses automatic description instead of overlapping the user reply',async()=>{
-  const {bridge,sent}=visualFixture();bridge.send(JSON.stringify({type:'video_start',id:'scene-two',duration:30}));await settle();
+test('spoken input suppresses a pending description instead of overlapping the user reply',async()=>{
+  const {bridge,sent}=visualFixture();bridge.send(JSON.stringify({type:'video_start',observe:true,id:'scene-two',duration:30}));await settle();
   bridge.event({type:'input_audio_buffer.speech_started'},bridge.channel);bridge.scene.config.onReady();
   assert.equal(sent.filter(e=>e.type==='response.create').length,0);bridge.close();
 });
@@ -320,7 +447,7 @@ const fastFixture=(options={})=>{
   fixture.document.getElementById=id=>id==='fast-describe'?{checked:true}:original(id);return fixture;
 };
 test('fast visual speech starts at the vision result without a second model response or context acknowledgement',async()=>{
-  const {bridge,sent,events}=fastFixture();bridge.send(JSON.stringify({type:'video_start',id:'fast-view',duration:120}));await settle();bridge.scene.config.onReady();await settle();
+  const {bridge,sent,events}=fastFixture();bridge.send(JSON.stringify({type:'video_start',observe:true,id:'fast-view',duration:120}));await settle();bridge.scene.config.onReady();await settle();
   const answer=events.find(e=>e.type==='app.scene_answer');assert.ok(answer);assert.match(answer.answer,/水杯/);
   assert.equal(bridge.pendingInstructions,true);assert.equal(sent.filter(e=>e.type==='response.create').length,0);
   bridge.finishLocalSpeech(answer.token);bridge.event({type:'session.updated'},bridge.channel);
@@ -328,15 +455,34 @@ test('fast visual speech starts at the vision result without a second model resp
   bridge.send(JSON.stringify({type:'text',text:'你好'}));assert.equal(sent.filter(e=>e.type==='response.create').length,1);bridge.close();
 });
 test('late device speech callbacks cannot clear a newer visual request',async()=>{
-  const {bridge,events}=fastFixture();bridge.send(JSON.stringify({type:'video_start',id:'speech-view',duration:120}));await settle();bridge.scene.config.onReady();await settle();
+  const {bridge,events}=fastFixture();bridge.send(JSON.stringify({type:'video_start',observe:true,id:'speech-view',duration:120}));await settle();bridge.scene.config.onReady();await settle();
   const answer=events.find(e=>e.type==='app.scene_answer');bridge.requestCurrentView('找眼镜');bridge.finishLocalSpeech(answer.token);
   assert.equal(bridge.visualPending,true);bridge.close();
 });
-test('failed device speech falls back to the cloud voice once',async()=>{
-  const {bridge,sent,events}=fastFixture();bridge.send(JSON.stringify({type:'video_start',id:'fallback-view',duration:120}));await settle();bridge.scene.config.onReady();await settle();
+test('failed device speech reports a retry option without switching back to cloud speech',async()=>{
+  const {bridge,sent,events}=fastFixture();bridge.send(JSON.stringify({type:'video_start',observe:true,id:'fallback-view',duration:120}));await settle();bridge.scene.config.onReady();await settle();
   const answer=events.find(e=>e.type==='app.scene_answer');bridge.finishLocalSpeech(answer.token,true);bridge.event({type:'session.updated'},bridge.channel);
-  assert.equal(sent.filter(e=>e.type==='response.create').length,1);bridge.finishLocalSpeech(answer.token,true);
-  assert.equal(sent.filter(e=>e.type==='response.create').length,1);bridge.close();
+  assert.equal(sent.filter(e=>e.type==='response.create').length,0);bridge.finishLocalSpeech(answer.token,true);
+  assert.equal(events.filter(e=>e.type==='app.device_voice_error').length,1);assert.equal(bridge.visualPending,false);bridge.close();
+});
+
+test('device voice requests text-only model output and keeps cloud audio muted',()=>{
+  for(const supportsSpeech of [true,false]){
+    const {runtime,document,audio}=runtimeFixture({supportsSpeech});
+    const get=document.getElementById;document.getElementById=id=>id==='fast-describe'?{checked:true}:get(id);
+    const bridge=new runtime.Bridge();bridge.mode='assistant';bridge.created=true;bridge.pc={connectionState:'connected',close(){}};
+    const sent=[];bridge.channel={readyState:'open',send:raw=>sent.push(JSON.parse(raw))};bridge.initialize();
+    assert.deepEqual(sent[0].session.modalities,supportsSpeech?['text']:['text','audio']);
+    bridge.updatePlayback();assert.equal(audio.muted,supportsSpeech);bridge.close();
+  }
+});
+
+test('device replay cancels pending cloud work without making a new model response',()=>{
+  const {bridge,sent}=fastFixture();bridge.active=true;let aborted=false;
+  bridge.sceneCommit={controller:{abort(){aborted=true;}}};bridge.queuedReply={text:'old answer'};
+  bridge.prepareDeviceReplay();assert.equal(aborted,true);assert.equal(bridge.queuedReply,null);
+  assert.ok(sent.some(e=>e.type==='response.cancel'));assert.ok(!sent.some(e=>e.type==='response.create'));
+  bridge.event({type:'response.text.done',item_id:'old',text:'旧回答'},bridge.channel);assert.equal(bridge.suppressResponse,true);bridge.close();
 });
 
 test('readable local preview does not wait for remote video statistics',async()=>{
@@ -350,7 +496,7 @@ test('fresh observation tool waits for frames, then answers directly from the cu
   const {bridge,sent,events}=visualFixture();toolCall(bridge,'request_observation',{goal:'找水杯'},'look');
   assert.ok(events.some(e=>e.type==='app.observe'&&e.goal==='找水杯'));
   assert.equal(sent.filter(e=>e.item?.call_id==='look').length,0);
-  bridge.send(JSON.stringify({type:'video_start',id:'find-cup',duration:30}));await settle();bridge.scene.config.onReady();
+  bridge.send(JSON.stringify({type:'video_start',observe:true,id:'find-cup',duration:30}));await settle();bridge.scene.config.onReady();
   await settle();bridge.event({type:'session.updated'},bridge.channel);
   const result=JSON.parse(sent.find(e=>e.item?.call_id==='look').item.output);
   assert.equal(result.camera_active,true);assert.equal(result.reference,'镜头画面');
@@ -360,7 +506,7 @@ test('fresh observation tool waits for frames, then answers directly from the cu
 
 test('failed observation never announces a successful description',async()=>{
   const {bridge,sent}=visualFixture();toolCall(bridge,'request_observation',{goal:'找水杯'},'failed-look');
-  bridge.send(JSON.stringify({type:'video_start',id:'failed-frame',duration:30}));await settle();bridge.scene.config.onError('无画面');
+  bridge.send(JSON.stringify({type:'video_start',observe:true,id:'failed-frame',duration:30}));await settle();bridge.scene.config.onError('无画面');
   const result=JSON.parse(sent.find(e=>e.item?.call_id==='failed-look').item.output);
   assert.equal(result.camera_active,false);assert.equal(result.error,'无画面');assert.equal(bridge.lastObservedAt,null);bridge.close();
 });
@@ -379,9 +525,11 @@ test('home search adds a labeled historical hint only when the target is clearly
   const {runtime,bridge,events}=visualFixture({fetch:fetcher});runtime.setPlace('home');
   runtime.memory.prepare({action:'record',name:'钥匙',location:'玄关桌上'});runtime.memory.confirm(runtime.memory.pending.token);
   bridge.send(JSON.stringify({type:'text',text:'找钥匙'}));
-  bridge.send(JSON.stringify({type:'video_start',id:'home-key',duration:30,goal:'找钥匙'}));await settle();bridge.scene.config.onReady();await settle();
+  bridge.send(JSON.stringify({type:'video_start',observe:true,id:'home-key',duration:30,goal:'找钥匙'}));await settle();bridge.scene.config.onReady();await settle();
   const answer=events.find(e=>e.type==='app.scene_fallback')?.answer||'';
-  assert.match(answer,/当前画面没有看到钥匙/);assert.match(answer,/上次记录钥匙在玄关桌上/);assert.match(answer,/不能确认/);
+  assert.match(answer,/还没有确认到.*钥匙/);assert.match(answer,/要听一下吗/);assert.ok(!answer.includes('玄关桌上'));
+  bridge.send(JSON.stringify({type:'text',text:'好'}));
+  const history=events.findLast(e=>e.type==='app.memory_result').answer;assert.match(history,/上次记录钥匙在玄关桌上/);assert.match(history,/不能确认/);
   bridge.close();
 });
 test('fast speech still verifies a home target before mentioning its saved location',async()=>{
@@ -395,10 +543,10 @@ test('fast speech still verifies a home target before mentioning its saved locat
   };
   const {runtime,bridge,events}=fastFixture({fetch:fetcher});runtime.setPlace('home');
   runtime.memory.prepare({action:'record',name:'钥匙',location:'玄关桌上'});runtime.memory.confirm(runtime.memory.pending.token);
-  bridge.send(JSON.stringify({type:'video_start',id:'fast-home-key',duration:30,goal:'找钥匙'}));await settle();bridge.scene.config.onReady();await settle();
+  bridge.send(JSON.stringify({type:'video_start',observe:true,id:'fast-home-key',duration:30,goal:'找钥匙'}));await settle();bridge.scene.config.onReady();await settle();
   assert.equal(requestedStream,false);
-  const spoken=events.find(e=>e.type==='app.scene_answer');assert.match(spoken.answer,/上次记录钥匙在玄关桌上/);
-  assert.match(spoken.answer,/不能确认/);bridge.close();
+  const spoken=events.find(e=>e.type==='app.scene_answer');assert.match(spoken.answer,/要听一下吗/);assert.ok(!spoken.answer.includes('玄关桌上'));
+  bridge.send(JSON.stringify({type:'text',text:'需要'}));assert.match(events.findLast(e=>e.type==='app.memory_result').answer,/玄关桌上/);bridge.close();
 });
 
 test('stopping observation informs the model that previous frames are historical',()=>{
@@ -465,7 +613,7 @@ test('spoken location suppresses the old response until the new visual result is
   bridge.event({type:'conversation.item.input_audio_transcription.completed',transcript:'水杯在哪？'},bridge.channel);
   assert.ok(sent.some(e=>e.type==='response.cancel'));assert.ok(events.some(e=>e.type==='app.observe'));
   bridge.event({type:'response.done',response:{status:'cancelled'}},bridge.channel);
-  bridge.send(JSON.stringify({type:'video_start',id:'new-view',duration:30}));await settle();bridge.scene.config.onReady();await settle();
+  bridge.send(JSON.stringify({type:'video_start',observe:true,id:'new-view',duration:30}));await settle();bridge.scene.config.onReady();await settle();
   bridge.event({type:'session.updated'},bridge.channel);bridge.event({type:'response.created'},bridge.channel);
   assert.equal(audio.muted,false);bridge.event({type:'response.text.done',text:'当前画面中的水杯在电脑左侧'},bridge.channel);
   assert.ok(events.some(e=>e.text==='当前画面中的水杯在电脑左侧'));assert.ok(!events.some(e=>e.text==='旧位置'));bridge.close();
@@ -474,7 +622,7 @@ test('spoken location suppresses the old response until the new visual result is
 test('a late vision result after closing the camera cannot become a current observation',async()=>{
   let finish;
   const {bridge,events}=visualFixture({fetch:async(url)=>url==='/api/vision'?await new Promise(resolve=>finish=resolve):Response.json({configured:true,authenticated:true})});
-  bridge.send(JSON.stringify({type:'video_start',id:'cancelled-view',duration:30}));await settle();bridge.scene.config.onReady();await settle();
+  bridge.send(JSON.stringify({type:'video_start',observe:true,id:'cancelled-view',duration:30}));await settle();bridge.scene.config.onReady();await settle();
   bridge.endVideo('已停止');finish(Response.json({answer:'水杯在电脑左侧',objects:[]}));await settle();
   assert.equal(bridge.lastObservedAt,null);assert.ok(!events.some(e=>e.type==='app.scene_ready'));bridge.close();
 });
@@ -528,7 +676,7 @@ test('frontend forwards partial sentences before final vision metadata and stopp
   let upstream;
   const body=new ReadableStream({start(c){upstream=c;}});
   const {bridge,events}=fastFixture({fetch:async url=>url==='/api/vision'?new Response(body,{headers:{'Content-Type':'text/event-stream'}}):Response.json({configured:true,authenticated:true})});
-  bridge.send(JSON.stringify({type:'video_start',id:'stream-view',duration:120}));await settle();bridge.scene.config.onReady();await settle();
+  bridge.send(JSON.stringify({type:'video_start',observe:true,id:'stream-view',duration:120}));await settle();bridge.scene.config.onReady();await settle();
   upstream.enqueue(new TextEncoder().encode(sse({type:'delta',text:'水杯在电脑左侧。'})));await settle();
   assert.ok(events.some(e=>e.type==='app.scene_delta'));assert.equal(bridge.currentScene,undefined);
   bridge.endVideo('停止');assert.ok(events.some(e=>e.type==='app.scene_cancel'));assert.equal(bridge.visualPending,false);assert.equal(bridge.localSpeechToken,null);
@@ -551,4 +699,287 @@ test('interrupting sentence speech drops its queued continuation and ignores lat
   player.begin('old');player.append('第一句。第二句。');const old=spoken[0];player.cancel();player.begin('new');player.append('新画面。');old.onend();
   assert.equal(spoken.length,2);assert.deepEqual(done,[['old',false]]);player.finish('新画面。');spoken[1].onend();
   assert.deepEqual(done,[['old',false],['new',false]]);
+});
+
+test('ordinary conversation reads complete text sentences before the final response and never repeats them',()=>{
+  class Utterance{constructor(text){this.text=text;}}
+  const spoken=[];const voice={lang:'zh-CN',localService:true};
+  const player=new SceneSpeech({synth:{cancel(){},getVoices:()=>[{lang:'en-US'},voice],speak:u=>{spoken.push(u);u.onstart();}},Utterance,schedule:()=>1,cancelTimer:()=>{}});
+  player.reply({type:'response.text.delta',item_id:'one',delta:'你好'});assert.equal(spoken.length,0);
+  player.reply({type:'response.text.delta',item_id:'one',delta:'。有什么可以帮你？'});
+  assert.equal(spoken[0].text,'你好。有什么可以帮你？');assert.equal(spoken[0].voice,voice);
+  spoken[0].onend();player.reply({type:'response.text.done',item_id:'one',text:'你好。有什么可以帮你？'});
+  player.reply({type:'response.text.done',item_id:'one',text:'你好。有什么可以帮你？'});
+  assert.equal(spoken.length,1);assert.equal(player.finished,true);
+});
+
+test('interrupting a spoken conversation ignores late text while a new reply can be read',()=>{
+  class Utterance{constructor(text){this.text=text;}}
+  const spoken=[];const player=new SceneSpeech({synth:{cancel(){},speak:u=>spoken.push(u)},Utterance,schedule:()=>1,cancelTimer:()=>{}});
+  player.reply({type:'response.text.delta',item_id:'old',delta:'旧回答。'});player.cancel();
+  player.reply({type:'response.text.done',item_id:'old',text:'旧回答。还有一句。'});
+  player.reply({type:'response.text.done',item_id:'new',text:'新回答'});
+  assert.deepEqual(spoken.map(u=>u.text),['旧回答。','新回答']);player.cancel();
+});
+
+
+
+test('memory search accepts descriptions and synonyms, returns candidates without changing names',()=>{
+  const memory=new Memory(storage());memory.remember('记住，蓝色水杯放在书桌上');memory.remember('记住，白色耳机盒放在抽屉里');memory.remember('记住，红色水杯放在柜子上');
+  assert.equal(memory.search('装耳机的盒子')[0].name,'白色耳机盒');
+  assert.equal(memory.search('杯子').length,2);assert.equal(memory.search('蓝色')[0].name,'蓝色水杯');
+  const companion=new MemoryCompanion(memory);const answer=companion.handle('我忘记之前记住的什么物品了').answer;
+  assert.match(answer,/蓝色水杯/);assert.match(answer,/哪一件/);
+  assert.match(companion.handle('是的').answer,/有几件/);
+  assert.match(companion.handle('第二个').answer,/历史位置/);
+  assert.equal(memory.all().length,3);
+});
+
+test('browsing memory can continue beyond the first five records',()=>{
+  const memory=new Memory(storage());for(let i=0;i<8;i++)memory.remember(`记住，物品${i}放在抽屉里`);
+  const companion=new MemoryCompanion(memory);assert.match(companion.handle('我记过什么').answer,/下一批/);
+  const next=companion.handle('下一批').answer;assert.match(next,/物品0/);assert.ok(!next.includes('物品7'));
+});
+
+test('a vague new record never saves under the name this or overwrites an arbitrary item',()=>{
+  const memory=new Memory(storage());memory.remember('记住，水杯放在桌上');
+  assert.equal(memory.remember('记住，这个放在床上').saved,false);assert.equal(memory.get('这个'),null);
+  const companion=new MemoryCompanion(memory);assert.match(companion.handle('记住，这个放在床上').answer,/哪一件/);
+  const selected=companion.handle('第一个');assert.ok(selected.pending);assert.equal(memory.get('水杯').location,'桌上');
+  assert.equal(selected.items.length,1);
+  companion.handle('确认');assert.equal(memory.get('水杯').location,'床上');assert.equal(memory.get('这个'),null);
+});
+
+test('visible location change checks identity, asks permission, then saves only after consent',()=>{
+  const memory=new Memory(storage());memory.remember('记住，蓝色水杯放在书桌上');
+  let now=Date.now();const companion=new MemoryCompanion(memory,()=>now);
+  const scene={answer:'桌上有一个蓝色杯子。',objects:[{name:'蓝色杯子',position:'床头柜上'}],observedAt:new Date(now).toISOString()};
+  const options={scene,cameraActive:true};
+  assert.match(companion.observe(scene,'',''),/是你之前记住/);assert.equal(memory.pending,null);
+  assert.match(companion.handle('是的',options).answer,/要把.*更新/);assert.equal(memory.get('蓝色水杯').location,'书桌上');
+  const done=companion.handle('确认',options);assert.match(done.answer,/已保存/);assert.equal(memory.get('蓝色水杯').location,'床头柜上');
+  assert.equal(companion.observe(scene,'',''),scene.answer);
+});
+
+test('denial, multiple lookalikes, stale or switched frames never update memory',()=>{
+  for(const reason of ['deny','stale','switched','closed']){
+    const memory=new Memory(storage());memory.remember('记住，水杯放在书桌上');let now=Date.now();
+    const companion=new MemoryCompanion(memory,()=>now),scene={answer:'有一个杯子。',objects:[{name:'杯子',position:'床头柜上'}],observedAt:new Date(now).toISOString()};
+    companion.observe(scene,'','');
+    if(reason==='deny')companion.handle('不是');
+    else{companion.handle('对');if(reason==='stale')now+=120001;companion.handle('确认',{cameraActive:reason!=='closed',scene:reason==='switched'?{...scene,observedAt:'2000-01-01T00:00:00Z'}:scene});}
+    assert.equal(memory.get('水杯').location,'书桌上');
+  }
+  const memory=new Memory(storage());memory.remember('记住，水杯放在桌上');const companion=new MemoryCompanion(memory);
+  const scene={answer:'有两个杯子。',objects:[{name:'蓝色杯子',position:'床头柜上'},{name:'白色杯子',position:'书桌上'}],observedAt:new Date().toISOString()};
+  assert.equal(companion.observe(scene,'',''),scene.answer);assert.equal(companion.pending,null);
+});
+
+test('runtime handles a spoken memory clarification, consent to history and a fresh-view follow-up',async()=>{
+  const {runtime,bridge,events}=visualFixture();runtime.setPlace('home');runtime.memory.remember('记住，白色耳机盒放在抽屉里');
+  const speak=transcript=>bridge.event({type:'conversation.item.input_audio_transcription.completed',transcript},bridge.channel);
+  speak('我忘记之前记住的什么物品了');assert.match(events.findLast(e=>e.type==='app.memory_result').answer,/耳机盒/);
+  speak('第一个');assert.match(events.findLast(e=>e.type==='app.memory_result').answer,/历史位置/);
+  speak('好');assert.ok(events.some(e=>e.type==='app.observe'&&e.goal==='找白色耳机盒'));bridge.close();
+});
+
+test('home overview keeps structured visible objects to allow one useful follow-up',async()=>{
+  let stream;
+  const {runtime,bridge,events}=fastFixture({fetch:async(url,options)=>{
+    if(url!=='/api/vision')return Response.json({configured:true,authenticated:true});
+    stream=JSON.parse(options.body).stream;return Response.json({answer:'床头柜上有一个蓝色杯子。',objects:[{name:'蓝色杯子',position:'床头柜上'}],target_visible:null});
+  }});runtime.setPlace('home');runtime.memory.remember('记住，蓝色水杯放在书桌上');
+  bridge.send(JSON.stringify({type:'video_start',observe:true,id:'proactive',duration:600}));await settle();bridge.scene.config.onReady();await settle();
+  assert.equal(stream,false);assert.match(events.findLast(e=>e.type==='app.scene_answer').answer,/是你之前记住/);
+  bridge.send(JSON.stringify({type:'text',text:'是的'}));assert.match(events.findLast(e=>e.type==='app.memory_result').answer,/要把/);
+  bridge.send(JSON.stringify({type:'text',text:'确认'}));assert.equal(runtime.memory.get('蓝色水杯').location,'床头柜上');bridge.close();
+});
+
+test('higher resolution vision supports more than five objects and rejects oversized uploads',async()=>{
+  let payload;
+  const objects=Array.from({length:12},(_,i)=>({name:'物品'+i,position:'桌面'}));
+  const response=await understand(visionRequest({image:'/9j/'+ 'A'.repeat(300000),goal:'桌子上有什么'}),async(url,options)=>{payload=JSON.parse(options.body);return Response.json({choices:[{message:{content:JSON.stringify({answer:'桌上有十二件物品。',objects})}}]});},serverEnv);
+  assert.equal(response.status,200);assert.equal((await response.json()).objects.length,12);assert.equal(payload.model,'qwen3.6-flash');assert.ok(payload.max_tokens>=1000);assert.match(payload.messages[0].content,/不.*凑数/);
+  assert.equal((await understand(visionRequest({image:'/9j/'+'A'.repeat(1200001)}),()=>assert.fail('oversize must not be sent'),serverEnv)).status,413);
+});
+
+test('published controls default to five minutes and provide ten minutes',()=>{
+  const html=readFileSync(new URL('../dist/video/index.html',import.meta.url),'utf8');
+  assert.match(html,/<option value="300" selected>5 分钟/);assert.match(html,/<option value="600">10 分钟/);
+  assert.ok(!html.includes('摄像头默认 2 分钟'));
+});
+
+
+test('realtime retries a transient connect timeout once, preserving the offer and credential boundary',async()=>{
+  let calls=0;const offer=config.sdp;
+  const response=await exchange(request(config),async(url,options)=>{
+    calls++;assert.equal(options.body,offer);assert.equal(options.redirect,'error');assert.equal(options.headers.Authorization,'Bearer '+key);
+    if(calls===1)throw new TypeError('fetch failed',{cause:{code:'UND_ERR_CONNECT_TIMEOUT',message:key}});
+    return new Response('v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n');
+  },serverEnv);
+  assert.equal(calls,2);assert.equal(response.status,200);assert.ok(!(await response.text()).includes(key));
+});
+
+test('persistent network failures are bounded and return a safe category without provider details',async()=>{
+  for(const [cause,code] of [['UND_ERR_CONNECT_TIMEOUT','UPSTREAM_TIMEOUT'],['ENOTFOUND','UPSTREAM_DNS'],['ECONNRESET','UPSTREAM_NETWORK']]){
+    let calls=0;const response=await exchange(request(config),async()=>{calls++;throw new TypeError(key,{cause:{code:cause,hostname:'secret-workspace.example',message:key}});},serverEnv);
+    const body=await response.text();assert.equal(calls,2);assert.equal(JSON.parse(body).error_code,code);assert.equal(JSON.parse(body).attempts,2);assert.ok(!body.includes(key));assert.ok(!body.includes('secret-workspace'));
+  }
+});
+
+test('authentication, TLS and invalid answers are never retried as transient transport failures',async()=>{
+  for(const make of [()=>Response.json({code:'InvalidApiKey'},{status:401}),()=>{throw new TypeError(key,{cause:{code:'CERT_HAS_EXPIRED'}});},()=>new Response('invalid answer')]){
+    let calls=0;const r=await exchange(request(config),async()=>{calls++;return make();},serverEnv);assert.equal(calls,1);assert.ok(r.status>=400);assert.ok(!(await r.text()).includes(key));
+  }
+  assert.equal(connectionFailure(new TypeError('x',{cause:{errors:[{code:'ETIMEDOUT'}]}})),'UPSTREAM_TIMEOUT');
+});
+
+test('cancelling a connection prevents retries and keeps the client wait longer than the retry budget',async()=>{
+  const controller=new AbortController();let calls=0;
+  const r=new Request('https://example.netlify.app/api/realtime/sdp',{method:'POST',headers:{Origin:'https://example.netlify.app'},body:JSON.stringify(config),signal:controller.signal});
+  const result=await exchange(r,async()=>{calls++;controller.abort();throw new DOMException('aborted','AbortError');},serverEnv);
+  assert.equal(calls,1);assert.equal((await result.json()).error_code,'CLIENT_CANCELLED');
+  const app=readFileSync(new URL('../dist/static/app.js',import.meta.url),'utf8');assert.match(app,/voiceTimer=setTimeout[\s\S]*?45000/);
+});
+
+
+test('fresh SDP transport disables pooled sockets, uses IPv4 and preserves certificate verification',async()=>{
+  const payload='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n';let optionsSeen;
+  const r=await freshSdp('https://example.invalid/realtime',{body:payload,headers:{Authorization:'Bearer '+key}},(url,options,callback)=>{
+    optionsSeen=options;const req=new EventEmitter();req.end=body=>{assert.equal(body,payload);queueMicrotask(()=>{const socket=new EventEmitter();req.emit('socket',socket);socket.emit('lookup');socket.emit('connect');socket.emit('secureConnect');const res=new EventEmitter();res.statusCode=200;res.headers={};callback(res);res.emit('data',Buffer.from(payload));res.emit('end');});};return req;
+  });
+  assert.equal(await r.text(),payload);assert.equal(optionsSeen.agent,false);assert.equal(optionsSeen.family,4);assert.equal(optionsSeen.headers.Connection,'close');assert.equal(optionsSeen.headers['Content-Length'],String(Buffer.byteLength(payload)));assert.notEqual(optionsSeen.rejectUnauthorized,false);
+});
+
+test('fresh SDP transport rejects oversized answers, does not follow redirects and propagates the abort signal',async()=>{
+  const signal=new AbortController().signal;
+  for(const status of [302,200]){
+    let connections=0,destroyed=false;
+    const promise=freshSdp('https://example.invalid/realtime',{signal},(url,options,callback)=>{
+      connections++;assert.equal(options.signal,signal);const req=new EventEmitter();req.destroy=()=>{destroyed=true;};req.end=()=>queueMicrotask(()=>{const res=new EventEmitter();res.headers={};res.statusCode=status;res.destroy=()=>{destroyed=true;};callback(res);res.emit('data',Buffer.from(status===200?'a'.repeat(160001):'redirect'));res.emit('end');});return req;
+    });
+    if(status===200){await assert.rejects(promise,/too large/);assert.equal(destroyed,true);}else assert.equal((await promise).status,302);
+    assert.equal(connections,1);
+  }
+  await assert.rejects(()=>freshSdp('http://example.invalid',{}),/Invalid connection target/);
+});
+
+test('fresh SDP transport identifies whether a connection stalled before TCP or after TLS',async()=>{
+  for(const [events,phase] of [[[],'dns'],[['lookup'],'tcp'],[['lookup','connect'],'tls'],[['lookup','connect','secureConnect'],'response']]){
+    const promise=freshSdp('https://example.invalid/realtime',{},(url,options,callback)=>{
+      const req=new EventEmitter();req.end=()=>queueMicrotask(()=>{const socket=new EventEmitter();req.emit('socket',socket);events.forEach(e=>socket.emit(e));const error=new DOMException('aborted','AbortError');req.emit('error',error);});return req;
+    });
+    await assert.rejects(promise,error=>error.connectionPhase===phase);
+  }
+});
+
+
+test('rich memory preserves several relations, appearance and aliases across reload, append and relocation',()=>{
+  const data=storage(),memory=new Memory(data);
+  const rich={name:'小蓝',location:'书桌靠墙区域',appearance:'蓝色带把手的杯子',aliases:['水杯','马克杯'],relations:[{reference:'电脑',relation:'左侧'},{reference:'台灯',relation:'旁边'}],evidence:'user'};
+  memory.prepareBatch([rich]);assert.equal(memory.get('小蓝'),null);memory.confirm(memory.pending.token);
+  let next=new Memory(data);assert.equal(next.get('小蓝').relations.length,2);assert.match(next.answer('小蓝'),/电脑的左侧/);assert.match(next.answer('小蓝'),/台灯的旁边/);assert.equal(next.search('马克杯')[0].name,'小蓝');
+  next.prepareBatch([{...rich,relations:[{reference:'书本',relation:'后面'}],append:true}]);next.confirm(next.pending.token);
+  assert.equal(new Memory(data).get('小蓝').relations.length,3);
+  next.prepareBatch([{name:'小蓝',location:'床头柜上',relations:[{reference:'闹钟',relation:'右边'}],evidence:'user',append:false}]);next.confirm(next.pending.token);
+  const moved=new Memory(data).get('小蓝');assert.equal(moved.relations.length,1);assert.equal(moved.appearance,rich.appearance);assert.ok(moved.aliases.includes('马克杯'));assert.ok(!describeRecord(moved).includes('电脑'));
+});
+
+test('batch memory is atomic, cancels without writes, preserves legacy records and refuses ambiguous entries',()=>{
+  const data=storage(),memory=new Memory(data);memory.remember('记住，钥匙放在玄关桌上');
+  const entries=[{name:'蓝色水杯',location:'电脑左侧',evidence:'user'},{name:'耳机盒',location:'台灯右侧',evidence:'user'}];
+  memory.prepareBatch(entries);memory.confirm(memory.pending.token,true);assert.equal(memory.all().length,1);
+  memory.prepareBatch(entries);const save=data.setItem;data.setItem=()=>{throw Error('quota');};assert.throws(()=>memory.confirm(memory.pending.token));assert.equal(memory.all().length,1);data.setItem=save;
+  memory.confirm(memory.pending.token);assert.equal(new Memory(data).all().length,3);assert.throws(()=>memory.prepareBatch([{name:'这个',location:'桌上'}]));
+});
+
+const memoryRequest=body=>new Request('https://example.netlify.app/api/memory/plan',{method:'POST',headers:{Origin:'https://example.netlify.app'},body:JSON.stringify(body)});
+const planResponse=result=>Response.json({choices:[{message:{content:JSON.stringify(result)}}]});
+test('memory model receives all structured observations, not just the spoken summary, and never writes storage',async()=>{
+  const scene={observedAt:new Date().toISOString(),answer:'桌上有水杯。',objects:[{name:'蓝色水杯',position:'桌上',relations:[{reference:'电脑',relation:'左侧'},{reference:'台灯',relation:'旁边'}]},{name:'白色耳机盒',position:'电脑右侧'}]};
+  let payload;
+  const response=await planMemory(memoryRequest({text:'把这些都记下来',records:[],scene,cameraActive:true}),async(url,options)=>{
+    payload=JSON.parse(options.body);return planResponse({action:'propose',answer:'我整理了两件物品，请核对。',entries:scene.objects.map(o=>({name:o.name,location:o.position,relations:o.relations||[],evidence:'scene',observed_name:o.name}))});
+  },serverEnv);
+  const result=await response.json();assert.equal(response.status,200);assert.equal(result.entries.length,2);assert.equal(result.entries[0].relations.length,2);assert.equal(result.sceneAt,scene.observedAt);
+  const input=JSON.parse(payload.messages[1].content);assert.equal(input.scene.objects.length,2);assert.equal(input.scene.objects[0].relations.length,2);assert.equal(payload.model,'qwen3.6-flash');assert.ok(!JSON.stringify(result).includes(key));
+});
+
+test('memory planner rejects stale, absent or invented visual evidence, remote origins and malformed output',async()=>{
+  const entry={name:'水杯',location:'电脑左侧',evidence:'scene',observed_name:'水杯'};
+  for(const scene of [null,{observedAt:'2000-01-01T00:00:00Z',objects:[{name:'水杯',position:'桌上'}]},{observedAt:new Date().toISOString(),objects:[{name:'书',position:'桌上'}]}]){
+    const r=await planMemory(memoryRequest({text:'记住这个',records:[],scene,cameraActive:true}),async()=>planResponse({action:'propose',answer:'待确认',entries:[entry]}),serverEnv);assert.equal(r.status,502);
+  }
+  const evil=new Request('https://example.netlify.app/api/memory/plan',{method:'POST',headers:{Origin:'https://evil.example'},body:'{}'});assert.equal((await planMemory(evil,()=>assert.fail('no external origin'),serverEnv)).status,403);
+  const r=await planMemory(memoryRequest({text:'帮我记住水杯的位置',records:[]}),async()=>planResponse({action:'propose',answer:'待确认',entries:[{name:'水杯',location:'桌上'}]}),serverEnv);assert.equal(r.status,502);
+});
+
+test('visible alias candidates cannot be reported as absent and historical positions never enter visual targets',()=>{
+  const target=visualTarget({name:'小蓝',appearance:'蓝色带把手杯子',aliases:['马克杯','水杯'],location:'旧柜子',relations:[{reference:'旧闹钟',relation:'左边'}]});
+  assert.ok(!JSON.stringify(target).includes('旧柜子'));assert.ok(!JSON.stringify(target).includes('旧闹钟'));
+  const result=groundTarget({answer:'没看到小蓝。',objects:[{name:'蓝色马克杯',position:'电脑左侧'}],target_visible:false},target);
+  assert.equal(result.target_visible,null);assert.match(result.answer,/蓝色马克杯/);assert.match(result.answer,/这是你记住/);assert.ok(!result.answer.includes('没看到'));
+});
+
+test('both voices request identical structured vision and retain all relation data',async()=>{
+  const requests=[];
+  for(const fast of [false,true]){
+    const fixture=(fast?fastFixture:visualFixture)({fetch:async(url,options)=>{if(url==='/api/vision'){requests.push(JSON.parse(options.body));return Response.json({answer:'电脑左侧有一个蓝色水杯。',objects:[{name:'蓝色水杯',position:'桌上',aliases:['马克杯'],relations:[{reference:'电脑',relation:'左侧'}]}]});}return Response.json({configured:true,authenticated:true});}});
+    fixture.bridge.send(JSON.stringify({type:'video_start',observe:true,id:'voice-parity',duration:300}));await settle();fixture.bridge.scene.config.onReady();await settle();
+    assert.equal(fixture.bridge.currentScene.objects[0].relations.length,1);fixture.bridge.close();
+  }
+  assert.deepEqual(requests[0],requests[1]);assert.equal(requests[0].stream,false);
+});
+
+test('visual memory command takes a new snapshot, drafts multiple objects and persists only after spoken consent',async()=>{
+  let snapshots=0,plans=0;
+  const objects=[{name:'蓝色水杯',position:'桌上',appearance:'蓝色带把手',relations:[{reference:'电脑',relation:'左侧'},{reference:'台灯',relation:'旁边'}]},{name:'白色耳机盒',position:'桌上',relations:[{reference:'电脑',relation:'右侧'}]}];
+  const {runtime,bridge,events}=visualFixture({captureFrame:()=>{snapshots++;return '/9j/new-frame';},fetch:async(url,options)=>{
+    if(url==='/api/vision')return Response.json({answer:'电脑旁有一个杯子。',objects});
+    if(url==='/api/memory/plan'){plans++;const body=JSON.parse(options.body);assert.equal(body.scene.objects.length,2);return Response.json({action:'propose',answer:'我整理了两件物品。',sceneAt:body.scene.observedAt,entries:objects.map(o=>({name:o.name,location:o.position,...o,evidence:'scene'}))});}
+    return Response.json({configured:true,authenticated:true});
+  }});runtime.setPlace('home');
+  bridge.send(JSON.stringify({type:'video_start',id:'batch-memory',duration:300}));await settle();
+  bridge.send(JSON.stringify({type:'text',text:'把画面里的这些物品都记下来'}));assert.ok(bridge.scene.config);bridge.scene.config.onReady();await settle();await settle();
+  assert.equal(snapshots,1);assert.equal(plans,1);assert.equal(runtime.memory.all().length,0);assert.equal(runtime.memory.pending.entries.length,2);assert.match(events.findLast(e=>e.type==='app.memory_result').answer,/台灯的旁边/);
+  bridge.send(JSON.stringify({type:'text',text:'确认'}));assert.equal(new Memory(runtime.memory.storage).all().length,2);assert.equal(runtime.memory.get('蓝色水杯').relations.length,2);bridge.close();
+});
+
+test('semantic memory completion after a place switch or cancellation cannot create a proposal',async()=>{
+  let finish;
+  const {runtime,bridge}=visualFixture({fetch:async(url)=>url==='/api/memory/plan'?await new Promise(resolve=>finish=resolve):Response.json({configured:true,authenticated:true})});runtime.setPlace('home');
+  bridge.send(JSON.stringify({type:'text',text:'补充水杯在电脑的左侧'}));await settle();runtime.setPlace('explore');
+  finish(Response.json({action:'propose',answer:'待保存',entries:[{name:'水杯',location:'电脑左侧',evidence:'user'}]}));await settle();assert.equal(runtime.memory.pending,null);assert.equal(runtime.memory.all().length,0);bridge.close();
+});
+
+test('cloud readback cannot replace canonical text or execute memory tools during a voice-only replay',()=>{
+  const {bridge,events,runtime}=visualFixture();runtime.setPlace('home');bridge.active=true;
+  bridge.replayAnswer('水杯在桌上，电脑左侧，台灯旁边。');bridge.event({type:'response.done',response:{status:'cancelled'}},bridge.channel);
+  bridge.event({type:'response.created'},bridge.channel);bridge.event({type:'response.audio_transcript.done',transcript:'改写成了另一段话'},bridge.channel);
+  bridge.event({type:'response.done',response:{output:[{type:'function_call',call_id:'bad-replay-write',name:'prepare_memory',arguments:JSON.stringify({action:'record',name:'错误物品',location:'错误位置'})}]}},bridge.channel);
+  assert.ok(!events.some(e=>e.transcript==='改写成了另一段话'));assert.equal(runtime.memory.pending,null);bridge.close();
+});
+
+
+test('corrections about a visible object request fresh evidence instead of repeating a cached absence',()=>{
+  const {bridge,events}=visualFixture();bridge.send(JSON.stringify({type:'text',text:'它明明就在画面里，你看漏了'}));
+  assert.ok(events.some(e=>e.type==='app.observe'&&e.goal.includes('看漏')));bridge.close();
+});
+
+test('cancelling a semantic plan releases its scene so an unrelated new question is not blocked',async()=>{
+  let finish;
+  const {runtime,bridge,sent}=visualFixture({fetch:async url=>url==='/api/memory/plan'?await new Promise(resolve=>finish=resolve):Response.json({configured:true,authenticated:true})});runtime.setPlace('home');
+  const scene={observedAt:new Date().toISOString(),objects:[]};bridge.sceneCommit=scene;
+  void bridge.planMemory('补充水杯在电脑左边',scene,scene);await settle();
+  bridge.event({type:'input_audio_buffer.speech_started'},bridge.channel);assert.equal(bridge.sceneCommit,null);
+  bridge.event({type:'input_audio_buffer.speech_stopped'},bridge.channel);bridge.replyPending=false;bridge.listening=false;
+  bridge.send(JSON.stringify({type:'text',text:'你好'}));assert.ok(sent.some(e=>e.type==='response.create'));
+  finish(Response.json({action:'reply',answer:'过期回答'}));await settle();assert.equal(runtime.memory.pending,null);bridge.close();
+});
+
+
+test('conflicting colors do not turn a clearly visible blue cup into a choice between cup and green bottle',()=>{
+  const result={answer:'蓝色水杯在右侧。',target_visible:true,objects:[{name:'蓝色水杯',appearance:'蓝色带把手',aliases:['马克杯','杯子'],position:'桌面右侧'},{name:'绿色瓶子',appearance:'绿色长瓶',aliases:['保温杯','水瓶'],position:'桌面最右侧'}]};
+  const grounded=groundTarget(result,{name:'小蓝',appearance:'蓝色带把手的杯子',aliases:['水杯','马克杯','杯子']});
+  assert.equal(grounded.target_visible,true);assert.equal(grounded.answer,result.answer);
 });
