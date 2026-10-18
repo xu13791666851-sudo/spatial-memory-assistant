@@ -5,6 +5,7 @@ await fs.mkdir(path.join(dist,'static'),{recursive:true});
 await fs.cp(path.join(root,'src/static'),path.join(dist,'static'),{recursive:true});
 await fs.copyFile(path.join(root,'web/assistant.css'),path.join(dist,'static/assistant.css'));
 await fs.copyFile(path.join(root,'web/memory.mjs'),path.join(dist,'static/memory.mjs'));
+await fs.copyFile(path.join(root,'web/find-dialogue.mjs'),path.join(dist,'static/find-dialogue.mjs'));
 await fs.copyFile(path.join(root,'web/runtime.mjs'),path.join(dist,'static/runtime.mjs'));
 for(const name of ['interaction','wake','context','stream','scene-speech','person-context'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
 let js=await fs.readFile(path.join(root,'src/static/app.js'),'utf8');
@@ -143,7 +144,7 @@ template=template.replace('<details class="disclosure"><summary>对话记录','<
 template=template.replace('<script src="/static/video-stream.js"></script><script src="/static/app.js"></script>','<script src="/static/video-stream.js"></script><script type="module" src="/static/app.js"></script>');
 template=template.replace('<div class="preferences">','<div class="preferences"><label for="answer-size">描述文字大小</label><select id="answer-size"><option value="18" selected>标准</option><option value="22">大字</option><option value="28">特大</option></select><label class="checkbox"><input id="fast-describe" type="checkbox">加速模式：画面描述用手机声音</label><p class="muted small">默认使用千问声音。开启加速模式可更快播报画面描述，但会切换为手机声音。结束后再听一遍会重新连接千问语音。</p>');
 template=template.replace(/<p class="intro memory-only">[\s\S]*?<\/p>\s*<p class="intro video-only">[\s\S]*?<\/p>/,'<p class="intro">看物品、记位置，需要时直接问我。</p>');
-template=template.replace('<section class="answer-card"','<div class="place-control"><label for="place-mode">当前场景</label><select id="place-mode"><option value="explore">普通场景</option><option value="home">家</option></select><p class="muted small">也可以说“我在家”或“我出门了”。只有在家中场景才使用已确认的物品位置记录。</p></div><section class="answer-card"');
+template=template.replace('<section class="answer-card"','<div class="place-control"><label for="place-mode">当前场景</label><select id="place-mode"><option value="explore">普通场景</option><option value="home">家</option></select><p class="muted small">也可以说“我在家”或“我出门了”。在家可以说“记住这个杯子的位置”；找物时可接着说“这样呢”。明确询问历史位置时，普通场景也可查询。</p></div><section class="answer-card"');
 template=template.replace('<details class="disclosure memory-only"><summary>我的物品记忆','<details id="home-memory-section" class="disclosure memory-only" hidden><summary>我的物品记忆');
 template=template.replace(/<nav class="bottom-nav"[\s\S]*?<\/nav>/,'');
 template=template.replace('<title>{{title}} · 空间记忆</title>','<title>{{title}}</title>');
