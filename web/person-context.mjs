@@ -1,6 +1,7 @@
 // Shared by image understanding and the realtime conversation so both keep
 // the same boundary between the person using the assistant and visible people.
 export const PERSON_CONTEXT_RULES =
+  '以下人物规则仅在当次图片确实清楚可见人物或人体局部时适用。先独立判断画面是否有人；不要因为这些规则或示例而添加人物。看不清或没有人时，不描述人物、衣着或动作。' +
   '【用户与画面人物】用户指正在使用本助手、向助手提问的人，可能位于镜头后方或完全不在画面内。' +
   '画面人物与用户的身份对应关系默认未知；即使只有一个人、人物靠近镜头、使用前置摄像头、出现镜中人、手或身体局部，也不能据此认定是用户。' +
   '描述可见人物时使用“画面中的一位人”“画面左侧穿白衣服的人”等第三人称，以画面位置和可见衣着区分多人。' +
