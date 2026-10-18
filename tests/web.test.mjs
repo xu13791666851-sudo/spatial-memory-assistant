@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Memory,rememberCommand} from '../web/memory.mjs';
+import {MemoryCompanion} from '../web/companion.mjs';
 import {SessionContext,placeIntent} from '../web/context.mjs';
 import {createRuntime,sessionConfig} from '../web/runtime.mjs';
 import {exchange} from '../netlify/functions/realtime-sdp.mjs';
@@ -395,7 +396,7 @@ test('delayed context acknowledgement does not silently discard a queued user re
 });
 
 test('two and five minute observations are accepted and preserve manual stop',async()=>{
-  for(const duration of [120,300]){
+  for(const duration of [120,300,600]){
     const {bridge}=visualFixture();bridge.send(JSON.stringify({type:'video_start',observe:true,id:'long-view',duration}));await settle();
     assert.equal(bridge.videoId,'long-view');bridge.send(JSON.stringify({type:'video_stop',id:'long-view'}));
     assert.equal(bridge.videoId,null);assert.equal(bridge.closed,false);bridge.close();
@@ -403,7 +404,7 @@ test('two and five minute observations are accepted and preserve manual stop',as
 });
 
 test('long frame timers continue past 30 seconds and stop exactly at their configured deadline',()=>{
-  for(const duration of [120,300]){
+  for(const duration of [120,300,600]){
     let now=0,nextId=0,stops=0,frames=0;const tasks=new Map();
     const add=(fn,delay,interval=0)=>{const id=++nextId;tasks.set(id,{fn,at:now+delay,interval});return id;};
     const context={module:{exports:{}},performance:{now:()=>now},setTimeout:(fn,ms)=>add(fn,ms),clearTimeout:id=>tasks.delete(id),setInterval:(fn,ms)=>add(fn,ms,ms),clearInterval:id=>tasks.delete(id)};
@@ -521,7 +522,9 @@ test('home search adds a labeled historical hint only when the target is clearly
   bridge.send(JSON.stringify({type:'text',text:'找钥匙'}));
   bridge.send(JSON.stringify({type:'video_start',observe:true,id:'home-key',duration:30,goal:'找钥匙'}));await settle();bridge.scene.config.onReady();await settle();
   const answer=events.find(e=>e.type==='app.scene_fallback')?.answer||'';
-  assert.match(answer,/当前画面没有看到钥匙/);assert.match(answer,/上次记录钥匙在玄关桌上/);assert.match(answer,/不能确认/);
+  assert.match(answer,/当前画面没有看到钥匙/);assert.match(answer,/要听一下吗/);assert.ok(!answer.includes('玄关桌上'));
+  bridge.send(JSON.stringify({type:'text',text:'好'}));
+  const history=events.findLast(e=>e.type==='app.memory_result').answer;assert.match(history,/上次记录钥匙在玄关桌上/);assert.match(history,/不能确认/);
   bridge.close();
 });
 test('fast speech still verifies a home target before mentioning its saved location',async()=>{
@@ -537,8 +540,8 @@ test('fast speech still verifies a home target before mentioning its saved locat
   runtime.memory.prepare({action:'record',name:'钥匙',location:'玄关桌上'});runtime.memory.confirm(runtime.memory.pending.token);
   bridge.send(JSON.stringify({type:'video_start',observe:true,id:'fast-home-key',duration:30,goal:'找钥匙'}));await settle();bridge.scene.config.onReady();await settle();
   assert.equal(requestedStream,false);
-  const spoken=events.find(e=>e.type==='app.scene_answer');assert.match(spoken.answer,/上次记录钥匙在玄关桌上/);
-  assert.match(spoken.answer,/不能确认/);bridge.close();
+  const spoken=events.find(e=>e.type==='app.scene_answer');assert.match(spoken.answer,/要听一下吗/);assert.ok(!spoken.answer.includes('玄关桌上'));
+  bridge.send(JSON.stringify({type:'text',text:'需要'}));assert.match(events.findLast(e=>e.type==='app.memory_result').answer,/玄关桌上/);bridge.close();
 });
 
 test('stopping observation informs the model that previous frames are historical',()=>{
@@ -714,3 +717,89 @@ test('interrupting a spoken conversation ignores late text while a new reply can
   assert.deepEqual(spoken.map(u=>u.text),['旧回答。','新回答']);player.cancel();
 });
 
+
+
+test('memory search accepts descriptions and synonyms, returns candidates without changing names',()=>{
+  const memory=new Memory(storage());memory.remember('记住，蓝色水杯放在书桌上');memory.remember('记住，白色耳机盒放在抽屉里');memory.remember('记住，红色水杯放在柜子上');
+  assert.equal(memory.search('装耳机的盒子')[0].name,'白色耳机盒');
+  assert.equal(memory.search('杯子').length,2);assert.equal(memory.search('蓝色')[0].name,'蓝色水杯');
+  const companion=new MemoryCompanion(memory);const answer=companion.handle('我忘记之前记住的什么物品了').answer;
+  assert.match(answer,/蓝色水杯/);assert.match(answer,/哪一件/);
+  assert.match(companion.handle('是的').answer,/有几件/);
+  assert.match(companion.handle('第二个').answer,/历史位置/);
+  assert.equal(memory.all().length,3);
+});
+
+test('browsing memory can continue beyond the first five records',()=>{
+  const memory=new Memory(storage());for(let i=0;i<8;i++)memory.remember(`记住，物品${i}放在抽屉里`);
+  const companion=new MemoryCompanion(memory);assert.match(companion.handle('我记过什么').answer,/下一批/);
+  const next=companion.handle('下一批').answer;assert.match(next,/物品0/);assert.ok(!next.includes('物品7'));
+});
+
+test('a vague new record never saves under the name this or overwrites an arbitrary item',()=>{
+  const memory=new Memory(storage());memory.remember('记住，水杯放在桌上');
+  assert.equal(memory.remember('记住，这个放在床上').saved,false);assert.equal(memory.get('这个'),null);
+  const companion=new MemoryCompanion(memory);assert.match(companion.handle('记住，这个放在床上').answer,/哪一件/);
+  const selected=companion.handle('第一个');assert.ok(selected.pending);assert.equal(memory.get('水杯').location,'桌上');
+  assert.equal(selected.items.length,1);
+  companion.handle('确认');assert.equal(memory.get('水杯').location,'床上');assert.equal(memory.get('这个'),null);
+});
+
+test('visible location change checks identity, asks permission, then saves only after consent',()=>{
+  const memory=new Memory(storage());memory.remember('记住，蓝色水杯放在书桌上');
+  let now=Date.now();const companion=new MemoryCompanion(memory,()=>now);
+  const scene={answer:'桌上有一个蓝色杯子。',objects:[{name:'蓝色杯子',position:'床头柜上'}],observedAt:new Date(now).toISOString()};
+  const options={scene,cameraActive:true};
+  assert.match(companion.observe(scene,'',''),/是你之前记住/);assert.equal(memory.pending,null);
+  assert.match(companion.handle('是的',options).answer,/要把.*更新/);assert.equal(memory.get('蓝色水杯').location,'书桌上');
+  const done=companion.handle('确认',options);assert.match(done.answer,/已保存/);assert.equal(memory.get('蓝色水杯').location,'床头柜上');
+  assert.equal(companion.observe(scene,'',''),scene.answer);
+});
+
+test('denial, multiple lookalikes, stale or switched frames never update memory',()=>{
+  for(const reason of ['deny','stale','switched','closed']){
+    const memory=new Memory(storage());memory.remember('记住，水杯放在书桌上');let now=Date.now();
+    const companion=new MemoryCompanion(memory,()=>now),scene={answer:'有一个杯子。',objects:[{name:'杯子',position:'床头柜上'}],observedAt:new Date(now).toISOString()};
+    companion.observe(scene,'','');
+    if(reason==='deny')companion.handle('不是');
+    else{companion.handle('对');if(reason==='stale')now+=120001;companion.handle('确认',{cameraActive:reason!=='closed',scene:reason==='switched'?{...scene,observedAt:'2000-01-01T00:00:00Z'}:scene});}
+    assert.equal(memory.get('水杯').location,'书桌上');
+  }
+  const memory=new Memory(storage());memory.remember('记住，水杯放在桌上');const companion=new MemoryCompanion(memory);
+  const scene={answer:'有两个杯子。',objects:[{name:'蓝色杯子',position:'床头柜上'},{name:'白色杯子',position:'书桌上'}],observedAt:new Date().toISOString()};
+  assert.equal(companion.observe(scene,'',''),scene.answer);assert.equal(companion.pending,null);
+});
+
+test('runtime handles a spoken memory clarification, consent to history and a fresh-view follow-up',async()=>{
+  const {runtime,bridge,events}=visualFixture();runtime.setPlace('home');runtime.memory.remember('记住，白色耳机盒放在抽屉里');
+  const speak=transcript=>bridge.event({type:'conversation.item.input_audio_transcription.completed',transcript},bridge.channel);
+  speak('我忘记之前记住的什么物品了');assert.match(events.findLast(e=>e.type==='app.memory_result').answer,/耳机盒/);
+  speak('第一个');assert.match(events.findLast(e=>e.type==='app.memory_result').answer,/历史位置/);
+  speak('好');assert.ok(events.some(e=>e.type==='app.observe'&&e.goal==='找白色耳机盒'));bridge.close();
+});
+
+test('home overview keeps structured visible objects to allow one useful follow-up',async()=>{
+  let stream;
+  const {runtime,bridge,events}=fastFixture({fetch:async(url,options)=>{
+    if(url!=='/api/vision')return Response.json({configured:true,authenticated:true});
+    stream=JSON.parse(options.body).stream;return Response.json({answer:'床头柜上有一个蓝色杯子。',objects:[{name:'蓝色杯子',position:'床头柜上'}],target_visible:null});
+  }});runtime.setPlace('home');runtime.memory.remember('记住，蓝色水杯放在书桌上');
+  bridge.send(JSON.stringify({type:'video_start',observe:true,id:'proactive',duration:600}));await settle();bridge.scene.config.onReady();await settle();
+  assert.equal(stream,false);assert.match(events.findLast(e=>e.type==='app.scene_answer').answer,/是你之前记住/);
+  bridge.send(JSON.stringify({type:'text',text:'是的'}));assert.match(events.findLast(e=>e.type==='app.memory_result').answer,/要把/);
+  bridge.send(JSON.stringify({type:'text',text:'确认'}));assert.equal(runtime.memory.get('蓝色水杯').location,'床头柜上');bridge.close();
+});
+
+test('higher resolution vision supports more than five objects and rejects oversized uploads',async()=>{
+  let payload;
+  const objects=Array.from({length:12},(_,i)=>({name:'物品'+i,position:'桌面'}));
+  const response=await understand(visionRequest({image:'/9j/'+ 'A'.repeat(300000),goal:'桌子上有什么'}),async(url,options)=>{payload=JSON.parse(options.body);return Response.json({choices:[{message:{content:JSON.stringify({answer:'桌上有十二件物品。',objects})}}]});},serverEnv);
+  assert.equal(response.status,200);assert.equal((await response.json()).objects.length,12);assert.equal(payload.model,'qwen3.6-flash');assert.ok(payload.max_tokens>=1000);assert.match(payload.messages[0].content,/不.*凑数/);
+  assert.equal((await understand(visionRequest({image:'/9j/'+'A'.repeat(1200001)}),()=>assert.fail('oversize must not be sent'),serverEnv)).status,413);
+});
+
+test('published controls default to five minutes and provide ten minutes',()=>{
+  const html=readFileSync(new URL('../dist/video/index.html',import.meta.url),'utf8');
+  assert.match(html,/<option value="300" selected>5 分钟/);assert.match(html,/<option value="600">10 分钟/);
+  assert.ok(!html.includes('摄像头默认 2 分钟'));
+});

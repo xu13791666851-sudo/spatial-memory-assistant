@@ -6,7 +6,7 @@ await fs.cp(path.join(root,'src/static'),path.join(dist,'static'),{recursive:tru
 await fs.copyFile(path.join(root,'web/assistant.css'),path.join(dist,'static/assistant.css'));
 await fs.copyFile(path.join(root,'web/memory.mjs'),path.join(dist,'static/memory.mjs'));
 await fs.copyFile(path.join(root,'web/runtime.mjs'),path.join(dist,'static/runtime.mjs'));
-for(const name of ['interaction','wake','context','stream','scene-speech','person-context'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
+for(const name of ['interaction','wake','context','stream','scene-speech','person-context','companion'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
 let js=await fs.readFile(path.join(root,'src/static/app.js'),'utf8');
 js=js.replace("const PAGE=document.body.dataset.page;","import {runtime} from './runtime.mjs';\nlet PAGE=document.body.dataset.page;\nawait runtime.loaded;");
 js=js.replace("const res=await fetch(path,", "if(window.spatialRuntime)return window.spatialRuntime.api(path,body,method);\n const res=await fetch(path,");
@@ -23,7 +23,7 @@ js=js.replaceAll('请先在设置里填写密钥并保存连接。','后台连�
 js=js.replace("configured?'连接已设置。':'连接尚未设置，填写密钥后保存。'", "configured?'连接已就绪，无须登录，点击开始对话即可。':'后台连接暂不可用，请点击检查连接；若仍未就绪，请联系管理员。'");
 js=js.replace("if(id==='screen-reader-mode'&&$(id).checked)stopPlayback();", "if(id==='screen-reader-mode')socket?.updatePlayback?.();if(id==='screen-reader-mode'&&$(id).checked)stopPlayback();");
 js=js.replace("case 'app.error':", "case 'app.audio_blocked':notify(event.message,0);break;\n case 'app.error':");
-js=js.replace("width:{ideal:640},height:{ideal:480},facingMode", "width:{ideal:640,max:640},height:{ideal:480,max:640},frameRate:{ideal:24,max:30},facingMode");
+js=js.replace("width:{ideal:640},height:{ideal:480},facingMode", "width:{ideal:1280,max:1280},height:{ideal:720,max:1280},frameRate:{ideal:24,max:30},facingMode");
 js=js.replace("const image=captureFrame();if(!image)return false;wsSend({type:'video_frame',id:videoId,image});return true;", "wsSend({type:'video_tick',id:videoId});return true;");
 js=js.replaceAll('已发送 0 张画面。','已观察 0 秒。').replaceAll('已发送 ${event.frames} 张画面。','已观察 ${event.frames} 秒。').replaceAll('本次已发送 ${event.frames} 张画面。','本次已观察 ${event.frames} 秒。');
 js=js.replace("async function navigateToPage(url){await stop();location.assign(url);}",`async function navigateToPage(url,push=true){
@@ -162,8 +162,8 @@ template=template.replace(/<nav class="bottom-nav"[\s\S]*?<\/nav>/,'');
 template=template.replace('<title>{{title}} · 空间记忆</title>','<title>{{title}}</title>');
 template=template.replace(/\b(memory-only|video-only)\b/g,'');
 template=template.replace('点击开始后，可以边看边说。','').replace('点击开始后，直接说话就可以。','');
-template=template.replace(/<p id="session-privacy"[\s\S]*?<\/p>/,'<p id="session-privacy" class="muted small">开始后开启语音和摄像头，先简短介绍，等待你提问后才识别画面。摄像头默认 2 分钟后关闭，随后语音继续；说“停止观察”可提前关闭摄像头。</p>');
-template=template.replace(/<select id="video-duration">[\s\S]*?<\/select>/,'<select id="video-duration"><option value="60">1 分钟</option><option value="120" selected>2 分钟</option><option value="300">5 分钟</option></select>');
+template=template.replace(/<p id="session-privacy"[\s\S]*?<\/p>/,'<p id="session-privacy" class="muted small">开始后开启语音和摄像头，先简短介绍，等待你提问后才识别画面。摄像头默认 5 分钟后关闭，可在观察选项中改为 10 分钟，随后语音继续；说“停止观察”可提前关闭摄像头。</p>');
+template=template.replace(/<select id="video-duration">[\s\S]*?<\/select>/,'<select id="video-duration"><option value="300" selected>5 分钟</option><option value="600">10 分钟</option></select>');
 template=template.replace('<p id="camera-state"','<p id="scene-time" class="muted small" aria-live="off"></p><p id="camera-state"');
 template=template.replace('<div class="more-content">','<div class="more-content"><details class="disclosure"><summary>语音唤醒入口</summary><button id="wake-toggle" class="full-width" type="button">启用语音唤醒（前台）</button><p id="wake-state" role="status">先启用，再说“小忆”开始对话，或直接说“小忆，找水杯”。</p><p class="muted small">仅在网页保持打开时工作。浏览器语音识别可能使用系统或在线服务；待机不连接千问。结束对话后回到唤醒待机，关闭唤醒才停止待机监听。锁屏或离开页面会关闭唤醒。不支持时可直接点击“开始对话”。</p></details>');
 template=template.replace('观察画面时优先口头提问；文字交流需要先连接助手。','不开启摄像头也可用文字记录和查询位置。识别画面或自由对话请先点击“开始对话”。');

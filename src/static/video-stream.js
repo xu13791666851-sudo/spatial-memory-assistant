@@ -4,7 +4,7 @@ class FrameStream {
   Object.assign(this,{now,interval,clearIntervalFn,timeout,clearTimeoutFn});this.running=false;this.generation=0;
  }
  start(seconds,capture,onStop){
-  if(![10,30,60,120,300].includes(seconds))throw Error('观察时长无效。');
+  if(![10,30,60,120,300,600].includes(seconds))throw Error('观察时长无效。');
   this.stop();const generation=++this.generation;this.running=true;this.sent=0;this.deadline=this.now()+seconds*1000;
   const finish=reason=>{if(generation!==this.generation)return;this.stop();onStop(reason);};
   const tick=()=>{

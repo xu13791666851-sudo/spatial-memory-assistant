@@ -12,7 +12,7 @@ function targetFrom(text){
   const value=cleanText(text).replace(/^(?:小忆[，,]?)?(?:请|帮我)?/,'');
   const match=value.match(/^(?:找(?:一下)?|寻找|看看)(.{1,30})$/)||value.match(/^(.{1,30}?)(?:在哪里|在哪儿|在哪|放哪了)$/);
   if(!match)return null;
-  const target=match[1].replace(/^(?:那个|这个|一只|一个|一些)/,'').trim();
+  const target=match[1].replace(/^(?:(?:那个|这个|我的|一只|一个|一些))+/,'').replace(/(?:现在|目前|具体)$/,'').trim();
   if(!target||/^(它|他|她|这个|那个|眼前|周围|这里|那里|什么|东西|环境)$/.test(target))return null;
   return target.slice(0,40);
 }
