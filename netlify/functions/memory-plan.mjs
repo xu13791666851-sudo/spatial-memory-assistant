@@ -1,6 +1,7 @@
 import {serverReady} from '../lib/access.mjs';
 import {freshSdp} from '../lib/fresh-sdp.mjs';
 import {details} from '../../web/spatial-record.mjs';
+import {nameSimilarity} from '../../web/memory.mjs';
 const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'no-store'}});
 const text=(s,n=600)=>typeof s==='string'?s.trim().slice(0,n):'';
 export async function planMemory(request,fetcher=freshSdp,env=process.env){
@@ -21,23 +22,25 @@ export async function planMemory(request,fetcher=freshSdp,env=process.env){
     '“补充它在电脑左边”应保留此前同一次摆放的其他关系；明确移动到新地方时清除失效旧关系，保留外观和别称。先根据当前对话找出“它”“这些”指的对象；有多个相似物品必须问清，不能替用户猜。保存看见的物品必须有本次scene，若没有则action=observe；仅用户口述的位置不需要摄像头。'+
     '相近名称和用途可以对应候选，例如蓝色马克杯可能是已存的蓝色水杯，但不能仅凭同类就确认个人身份。询问以前记过什么、位置和关系时，使用records回答，保留来源和时间；没有记录明确说明。一次只问一个有用的问题，自然承接recent。不要因为用户没有准确说出登记名就回答没有。'+
     '输出JSON：action为reply（回答或澄清）、observe（需要新画面）、propose（待确认保存）；answer是自然中文。propose只在用户要求保存、更新、补充时使用，不能声称已保存，必须等应用写入成功；entries最多20件，每件包含name（已有物品沿用其名称）、location（完整放置区域）、appearance、aliases字符串数组、relations数组（每项reference与relation）、append（同位置补充true，移动false）、evidence（user或scene）、observed_name（scene来源时必须精确对应scene.objects的一件）。对批量保存不可凭空把同类物品合成一件。';
+  let stage='connection';
   try{
     const response=await fetcher(`https://${workspace}.${region==='beijing'?'cn-beijing':'ap-southeast-1'}.maas.aliyuncs.com/compatible-mode/v1/chat/completions`,{method:'POST',redirect:'error',signal:AbortSignal.any([request.signal,AbortSignal.timeout(25000)]),headers:{Authorization:'Bearer '+env.DASHSCOPE_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({model:'qwen3.6-flash',enable_thinking:false,response_format:{type:'json_object'},temperature:0.1,max_tokens:2800,messages:[{role:'system',content:instructions},{role:'user',content:JSON.stringify({text:body.text,focus:text(body.focus,60),recent,records,scene})}]})});
     if(!response.ok)return reply({detail:'千问暂时未能整理记忆，尚未保存，请稍后重试。'},502);
-    const data=await response.json(),result=JSON.parse(data?.choices?.[0]?.message?.content||'');
-    if(!['reply','observe','propose'].includes(result.action)||!text(result.answer,1600))throw Error('Invalid plan');
-    const answer=text(result.answer,1600);
+    stage='model_response';const data=await response.json();stage='json';
+    const result=JSON.parse(data?.choices?.[0]?.message?.content||'');stage='plan';
+    if(!['reply','observe','propose'].includes(result.action)||(!text(result.answer,1600)&&result.action!=='propose'))throw Error('Invalid plan');
+    const answer=text(result.answer,1600)||'我整理了以下物品，请核对后确认。';
     if(result.action!=='propose')return reply({action:result.action,answer,model:'qwen3.6-flash'});
     if(!Array.isArray(result.entries)||!result.entries.length||result.entries.length>20)throw Error('Invalid entries');
-    const names=new Set(scene?.objects.map(o=>o.name)||[]);
+    const names=new Set(scene?.objects.map(o=>o.name)||[]);stage='entry';
     const entries=result.entries.map(e=>{
       const name=text(e.name,60),location=text(e.location,600);if(!name||!location)throw Error('Invalid entry');
       if(!['scene','user'].includes(e.evidence))throw Error('Invalid evidence');
-      if(e.evidence==='scene'&&(!scene||!names.has(e.observed_name)))throw Error('Missing visual evidence');
+      if(e.evidence==='scene'&&(!scene||(!names.has(e.observed_name)&&!names.has(name)))){stage='visual_evidence';throw Error('Missing visual evidence');}
       return {name,location,...details(e),append:e.append===true,evidence:e.evidence==='scene'?'scene':'user'};
     });
     return reply({action:'propose',answer,entries,sceneAt:entries.some(e=>e.evidence==='scene')?scene?.observedAt:null,model:'qwen3.6-flash'});
-  }catch{return reply({detail:'这次记忆整理没有完成，原记录没有更改。请重新说明。'},502);}
+  }catch{console.error('memory_plan_failed',JSON.stringify({stage}));return reply({detail:'这次记忆整理没有完成，原记录没有更改。请重新说明。',error_code:'MEMORY_'+stage.toUpperCase()},502);}
 }
 export default request=>planMemory(request);
 export const config={path:'/api/memory/plan',method:'POST',rateLimit:{windowLimit:12,windowSize:60,aggregateBy:['ip','domain']}};
