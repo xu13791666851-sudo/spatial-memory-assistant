@@ -710,3 +710,17 @@ test('short name matching does not confuse an object with its accessory',()=>{
   assert.equal(m.get('钥匙'),null);assert.equal(m.get('杯子'),null);
   m.remember('记住，蓝色玻璃杯放在桌上');assert.equal(m.get('蓝色杯').name,'蓝色玻璃杯');
 });
+
+test('replayed transcripts remain marked after speech interrupts the replay',()=>{
+ const {bridge,events}=visualFixture();bridge.replayAnswer('已保存的回答');
+ bridge.event({type:'response.created',response:{id:'replay-response'}},bridge.channel);
+ bridge.event({type:'response.text.delta',response_id:'replay-response',item_id:'replayed-item',delta:'已保存'},bridge.channel);
+ assert.equal(events.findLast(e=>e.type==='response.text.delta').replay,true);
+ bridge.event({type:'input_audio_buffer.speech_started'},bridge.channel);
+ bridge.event({type:'response.text.done',response_id:'replay-response',item_id:'replayed-item',text:'已保存的回答'},bridge.channel);
+ bridge.event({type:'conversation.item.input_audio_transcription.completed',transcript:'谢谢'},bridge.channel);
+ assert.equal(events.findLast(e=>e.type==='response.text.done').replay,true);
+ bridge.event({type:'response.created',response:{id:'new-response'}},bridge.channel);
+ bridge.event({type:'response.text.done',response_id:'new-response',item_id:'new-item',text:'不客气'},bridge.channel);
+ assert.equal(events.findLast(e=>e.type==='response.text.done').replay,undefined);bridge.close();
+});

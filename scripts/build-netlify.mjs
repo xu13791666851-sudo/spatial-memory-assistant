@@ -1,3 +1,4 @@
+import {applyConversationLayout} from './conversation-layout.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 const root=process.cwd(),dist=path.join(root,'dist');
@@ -7,7 +8,7 @@ await fs.copyFile(path.join(root,'web/assistant.css'),path.join(dist,'static/ass
 await fs.copyFile(path.join(root,'web/memory.mjs'),path.join(dist,'static/memory.mjs'));
 await fs.copyFile(path.join(root,'web/find-dialogue.mjs'),path.join(dist,'static/find-dialogue.mjs'));
 await fs.copyFile(path.join(root,'web/runtime.mjs'),path.join(dist,'static/runtime.mjs'));
-for(const name of ['interaction','wake','context','stream','scene-speech','person-context'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
+for(const name of ['interaction','wake','context','stream','scene-speech','person-context','conversation'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
 let js=await fs.readFile(path.join(root,'src/static/app.js'),'utf8');
 js=js.replace("const PAGE=document.body.dataset.page;","import {runtime} from './runtime.mjs';\nlet PAGE=document.body.dataset.page;\nawait runtime.loaded;");
 js=js.replace("const res=await fetch(path,", "if(window.spatialRuntime)return window.spatialRuntime.api(path,body,method);\n const res=await fetch(path,");
@@ -168,6 +169,7 @@ template=template.replace(/<div class="">\s*(<p id="scene-time"[\s\S]*?<\/p>\s*<
 template=template.replace('<p>摄像头未开启</p>','<p>点击开始，查看周围</p>');
 // Show an idle placeholder in the same large camera area.
 js=js.replace("$('camera-preview').hidden=!cameraStream;","$('camera-preview').hidden=false;");
+({js,template}=applyConversationLayout(js,template));
 await fs.writeFile(path.join(dist,'static/app.js'),js);
 let html=template;
 for(const [key,value]of Object.entries(values))html=html.replaceAll(`{{${key}}}`,value);

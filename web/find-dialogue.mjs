@@ -49,7 +49,7 @@ export class FindDialogue{
     this.saving=null;
     if(this.choices.length&&(selection(text)||clean(text).length<=40)){
       const value=clean(text),matches=this.choices.filter(r=>value.includes(r.name)||[r.name,r.location].some(s=>s.includes(value.replace(/^(?:是|要)/,'').replace(/(?:的)?(?:那个|那只|那一个)$/,''))));
-      if(matches.length===1){this.choices=[];this.focus(matches[0].name);this.misses=1;this.objectId=matches[0].object_id||matches[0].id;return {kind:'answer',answer:this.memory.answer(matches[0].name)+' 可以把镜头对准记录的位置吗？'};}
+      if(matches.length===1){this.choices=[];this.focus(matches[0].name);this.misses=1;this.objectId=matches[0].object_id||matches[0].id;return {kind:'answer',history:true,answer:this.memory.answer(matches[0].name)+' 可以把镜头对准记录的位置吗？'};}
     }
     const target=searchTarget(text,this.target);
     if(target){
@@ -61,7 +61,7 @@ export class FindDialogue{
         if(records.length===1){this.focus(records[0].name);this.objectId=records[0].object_id||records[0].id;this.misses=1;}
         const question=records.length===1?'可以把镜头对准记录的位置吗？':records.length===0?'你最后一次使用它是在什么地方？':'';
         this.lastQuestion=question;
-        return {kind:'answer',answer:this.memory.answer(target)+(question?' '+question:'')};
+        return {kind:'answer',history:records.length>0,answer:this.memory.answer(target)+(question?' '+question:'')};
       }
       return this.observation();
     }
