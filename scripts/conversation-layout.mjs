@@ -49,7 +49,7 @@ export function applyConversationLayout(js,template){
     .replace('async function stop(){voiceGeneration++;','async function stop(){conversation.end();voiceGeneration++;');
   js=js.replace("$('main-toggle').textContent=active?(ready?'结束对话':'取消开启'):('开始对话')", "$('main-toggle').textContent=active?(ready?(paused?'继续对话':'暂停对话'):'取消开启'):'开始对话'");
   js=js.replace("$('main-toggle').classList.toggle('active',active);", "$('main-toggle').classList.toggle('active',active);$('end-conversation').hidden=!active;");
-  js=js.replace("$('video-again').onclick=startVideo;","$('video-again').onclick=()=>startVideo();");
+  js=js.replace("$('video-again').onclick=startVideo;","$('video-again').onclick=()=>startVideo('',true);");
   js=js.replace("$('main-toggle').onclick=async()=>{if(sessionActive())await stop();", "$('main-toggle').onclick=async()=>{if(ready){$('pause').click();return;}if(sessionActive())await stop();");
   // Construct history before the bootstrap IIFE can render an offline response.
   const marker="(async()=>{try{const status=window.spatialRuntime.status();";

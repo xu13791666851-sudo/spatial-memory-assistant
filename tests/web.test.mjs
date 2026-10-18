@@ -275,6 +275,16 @@ const visualFixture=(options={})=>{
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 const toolCall=(bridge,name,args,id)=>bridge.event({type:'response.done',response:{output:[{type:'function_call',call_id:id,name,arguments:JSON.stringify(args)}]}},bridge.channel);
 
+test('quiet camera startup waits for a spoken observation request',async()=>{
+  const {bridge,events}=visualFixture();
+  bridge.send(JSON.stringify({type:'video_start',id:'quiet-view',duration:120,describe:false}));await settle();
+  assert.ok(!bridge.scene.config);
+  assert.equal(events.find(e=>e.type==='app.video_started').describe,false);
+  bridge.event({type:'conversation.item.input_audio_transcription.completed',transcript:'眼前有什么'},bridge.channel);
+  assert.ok(bridge.scene.config);bridge.scene.config.onReady();await settle();
+  assert.equal(events.filter(e=>e.type==='app.scene_fallback').length,1);bridge.close();
+});
+
 test('two and five minute observations are accepted and preserve manual stop',async()=>{
   for(const duration of [120,300]){
     const {bridge}=visualFixture();bridge.send(JSON.stringify({type:'video_start',id:'long-view',duration}));await settle();

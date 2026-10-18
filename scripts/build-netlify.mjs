@@ -61,7 +61,7 @@ js=js.replace('function speak(text){',`function speak(text){
 `);
 js=js.replace('audioContext=new AudioContext();await audioContext.resume();','audioContext=audioContext||new AudioContext();await audioContext.resume();');
 js=js.replace("else{if(!await startMic())return;paused=false;wsSend({type:'resume'});","else{wsSend({type:'resume'});if(!await startMic())return;paused=false;");
-js=js.replace(/async function startVideo\(\)\{[\s\S]*?\r?\n\}\r?\nfunction finishVoice/,`async function startVideo(goal=""){
+js=js.replace(/async function startVideo\(\)\{[\s\S]*?\r?\n\}\r?\nfunction finishVoice/,`async function startVideo(goal="",describe=!!goal){
  if(paused||videoId||videoOpening)return;
  if(!configured){await startVoice();return;}
  primeSpeech();
@@ -72,14 +72,14 @@ js=js.replace(/async function startVideo\(\)\{[\s\S]*?\r?\n\}\r?\nfunction finis
  const cameraReady=await previewReady;
  if(videoId!==id)return;
  if(!voiceReady||!cameraReady||!ready||paused){await stopCamera('本次观察未能开启，请重新开始。');return;}
- videoOpening=false;cameraUI();$('camera-state').textContent='画面已显示，正在理解环境。';
- wsSend({type:'video_start',id,duration,goal});
+ videoOpening=false;cameraUI();$('camera-state').textContent=describe?'画面已显示，正在理解环境。':'画面已显示，等待你的提问。';
+ wsSend({type:'video_start',id,duration,goal,describe});
  videoRequestTimer=setTimeout(()=>{if(videoId===id&&!frameStream.running)stopCamera('视频连接没有准备好，摄像头已关闭。请重新开启。');},8000);
 }
 function finishVoice`);
 js=js.replace('cameraStream=stream;$(\'preview\').srcObject=stream;$(\'preview\').style.display=\'block\';$(\'camera-empty\').hidden=true;',`cameraStream=stream;$('preview').muted=true;$('preview').playsInline=true;$('preview').srcObject=stream;$('preview').style.display='block';$('camera-empty').hidden=true;cameraUI();await $('preview').play();if(generation!==cameraGeneration)return false;`);
 js=js.replace("stateUI('对话已结束，麦克风已关闭。');}","stateUI('对话已结束，麦克风已关闭。');if(wake.enabled&&!document.hidden)setTimeout(()=>{if(!sessionActive()&&!document.hidden)wake.resume();},600);}");
-js=js.replace("case 'app.memory':",`case 'app.observe':if(!paused&&!videoId&&!videoOpening)await startVideo(event.goal);break;
+js=js.replace("case 'app.memory':",`case 'app.observe':if(!paused&&!videoId&&!videoOpening)await startVideo(event.goal,true);break;
  case 'app.scene_begin':sceneText='';$('replay').disabled=true;sceneSpeech?.begin(event.token);break;
  case 'app.scene_delta':sceneText+=event.text;$('latest-answer').textContent=sceneText;sceneSpeech?.append(event.text);break;
  case 'app.scene_cancel':sceneSpeech?.cancel();break;
@@ -91,7 +91,7 @@ js=js.replace("case 'app.memory':",`case 'app.observe':if(!paused&&!videoId&&!vi
  case 'app.memory':`);
 js=js.replace("if(event.transcript){bubble(event.transcript,true);","if(event.transcript){bubble(event.transcript,true);if(/^(结束对话|退出对话)[。！!\\s]*$/.test(event.transcript.trim())){await stop();break;}");
 js=js.replace("case 'app.video_started':{","case 'app.video_started':{");
-js=js.replace('视频观察已开启，${event.duration} 秒后自动关闭摄像头。可以边看边说。',"视频观察已开启，正在准备环境描述。${event.duration>=60?event.duration/60+' 分钟':event.duration+' 秒'}后关闭摄像头，语音继续。");
+js=js.replace('视频观察已开启，${event.duration} 秒后自动关闭摄像头。可以边看边说。',"摄像头已开启，${event.describe===false?'等待你的提问':'正在准备描述'}。${event.duration>=60?event.duration/60+' 分钟':event.duration+' 秒'}后关闭摄像头，语音继续。");
 js+=`\nconst wake=new ForegroundWake({Recognition:window.SpeechRecognition||window.webkitSpeechRecognition,isVisible:()=>!document.hidden,
  onState:message=>{$('wake-state').textContent=message;$('wake-toggle').textContent=wake.enabled?'关闭语音唤醒':'启用语音唤醒（前台）';if(!sessionActive())$('voice-state').textContent=message;},
  onWake:async({goal})=>{try{await new Promise(resolve=>setTimeout(resolve,350));if(!document.hidden)await startVideo(goal);}catch{notify('唤醒后未能开启，请点击“开始对话”。');}}
@@ -157,7 +157,7 @@ template=template.replace('<p id="camera-state"','<p id="scene-time" class="mute
 template=template.replace('<div class="more-content">','<div class="more-content"><details class="disclosure"><summary>语音唤醒入口</summary><button id="wake-toggle" class="full-width" type="button">启用语音唤醒（前台）</button><p id="wake-state" role="status">先启用，再说“小忆”开始观察。</p><p class="muted small">仅在网页保持打开时工作。浏览器语音识别可能使用系统或在线服务；待机不连接千问。结束对话后回到唤醒待机，关闭唤醒才停止待机监听。锁屏或离开页面会关闭唤醒。不支持时可直接点击“开始对话”。</p></details>');
 template=template.replace('观察画面时优先口头提问；文字交流需要先连接助手。','不开启摄像头也可用文字记录和查询位置。识别画面或自由对话请先点击“开始对话”。');
 template=template.replace('删除全部记录','删除记录');
-const values={page:'assistant',title:'空间记忆助手',welcome:'开始后，我会描述眼前的环境。\n接着可以问：“水杯在哪里？”\n想再观察，说：“再看一下。”',placeholder:'例如：找水杯，或记住钥匙的位置'};
+const values={page:'assistant',title:'空间记忆助手',welcome:'你好，我是小忆。开始后可以直接和我说话。\n需要描述时可以问：“水杯在哪里？”\n想再观察，说：“再看一下。”',placeholder:'例如：找水杯，或记住钥匙的位置'};
 // Keep the complete camera field above a compact, scrollable answer and two controls.
 const answerCard=template.match(/<section class="answer-card"[\s\S]*?<\/section>/)?.[0];
 if(!answerCard)throw Error('Assistant answer panel missing');
