@@ -1,6 +1,8 @@
 import {serverReady} from '../lib/access.mjs';
 import {readEvents} from '../../web/stream.mjs';
 import {PERSON_CONTEXT_RULES} from '../../web/person-context.mjs';
+import {details} from '../../web/spatial-record.mjs';
+import {groundTarget} from '../../web/visual-grounding.mjs';
 const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'no-store'}});
 export async function understand(request,fetcher=fetch,env=process.env){
   if(request.method!=='POST')return reply({detail:'请求方式不支持。'},405);
@@ -9,6 +11,7 @@ export async function understand(request,fetcher=fetch,env=process.env){
   let body;
   try{const raw=await request.text();if(raw.length>1250000)return reply({detail:'当前画面过大，请重新观察。'},413);body=JSON.parse(raw);}catch{return reply({detail:'画面格式不正确。'},400);}
   const {image,goal='',stream=false}=body||{};
+  const target=body?.target&&typeof body.target.name==='string'?{name:body.target.name.slice(0,60),appearance:details(body.target).appearance,aliases:details(body.target).aliases}:null;
   if(typeof image==='string'&&image.length>1200000)return reply({detail:'当前画面过大，请重新观察。'},413);
   if(typeof image!=='string'||image.length>1200000||!/^\/9j\/[A-Za-z0-9+/]*={0,2}$/.test(image)||typeof goal!=='string'||goal.length>400||typeof stream!=='boolean')return reply({detail:'当前画面未准备好，请重新观察。'},400);
   const workspace=env.DASHSCOPE_WORKSPACE_ID,region=env.DASHSCOPE_REGION||'beijing';
@@ -18,7 +21,7 @@ export async function understand(request,fetcher=fetch,env=process.env){
   try{
     const response=await fetcher(`https://${workspace}.${region==='beijing'?'cn-beijing':'ap-southeast-1'}.maas.aliyuncs.com/compatible-mode/v1/chat/completions`,{
       method:'POST',redirect:'error',signal,headers:{Authorization:'Bearer '+env.DASHSCOPE_API_KEY,'Content-Type':'application/json'},
-      body:JSON.stringify({model:'qwen3.6-flash',enable_thinking:false,max_tokens:1400,temperature:0.1,...(stream?{stream:true}:{response_format:{type:'json_object'}}),messages:[{role:'system',content:system+PERSON_CONTEXT_RULES},{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+image}},{type:'text',text:goal?'请看当前图片，回答：'+goal:'请概括当前环境及主要物品之间的位置关系。'}]}]})
+      body:JSON.stringify({model:'qwen3.6-flash',enable_thinking:false,max_tokens:2800,temperature:0.1,...(stream?{stream:true}:{response_format:{type:'json_object'}}),messages:[{role:'system',content:system+PERSON_CONTEXT_RULES+' 对每个objects物品还要返回appearance（仅可见外观）、aliases（通用类别和常见名称）以及relations（多个明确可见参照关系，每项reference和relation）。不能只复制answer里提过的一个位置，要检查其他可见参照物。自定义登记名称未必出现在图中：按通用类别、别称、颜色和形状找候选，疑似同类但不能确认身份时target_visible=null，不得直接说没看到。'}, {role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+image}},{type:'text',text:(goal?'请看当前图片，回答：'+goal:'请概括当前环境及主要物品之间的位置关系。')+(target?'\n要寻找的物品资料（仅名称、别称和外观，不代表它当前存在）：'+JSON.stringify(target):'')}]}]})
     });
     if(!response.ok)return reply({detail:response.status===401||response.status===403?'视觉理解未获授权，请检查后台模型权限。':'视觉理解暂未完成，请稍后重新观察。'},502);
     if(stream){
@@ -42,9 +45,9 @@ export async function understand(request,fetcher=fetch,env=process.env){
     if(typeof text!=='string'||text.length>10000)throw Error('Invalid vision result');
     const result=JSON.parse(text);
     if(typeof result.answer!=='string'||!result.answer.trim()||result.answer.length>1600)throw Error('Invalid answer');
-    const objects=Array.isArray(result.objects)?result.objects.filter(o=>typeof o?.name==='string'&&typeof o?.position==='string'&&o.name.length<100&&o.position.length<500).slice(0,20):[];
+    const objects=Array.isArray(result.objects)?result.objects.filter(o=>typeof o?.name==='string'&&typeof o?.position==='string'&&o.name.length<100&&o.position.length<500).slice(0,20).map(o=>({name:o.name,position:o.position,...details(o)})):[];
     const targetVisible=typeof result.target_visible==='boolean'?result.target_visible:null;
-    return reply({answer:result.answer.trim(),objects,target_visible:targetVisible,source:'current_camera_frame',observedAt:new Date().toISOString()});
+    return reply(groundTarget({answer:result.answer.trim(),objects,target_visible:targetVisible,source:'current_camera_frame',observedAt:new Date().toISOString()},target));
   }catch(error){console.error('vision_failure',JSON.stringify({name:['TimeoutError','AbortError','SyntaxError','TypeError'].includes(error?.name)?error.name:'InvalidResult'}));return reply({detail:error?.name==='TimeoutError'?'画面识别等待超时，请保持镜头稳定后重新观察。':error?.name==='SyntaxError'?'画面识别结果未能读取，请重新观察。':'当前画面的理解没有完成，请重新观察。'},502);}
 }
 export default request=>understand(request);

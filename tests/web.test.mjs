@@ -1,3 +1,6 @@
+import {planMemory} from '../netlify/functions/memory-plan.mjs';
+import {visualTarget,groundTarget} from '../web/visual-grounding.mjs';
+import {describeRecord} from '../web/spatial-record.mjs';
 import {EventEmitter} from 'node:events';
 import {freshSdp} from '../netlify/lib/fresh-sdp.mjs';
 import test from 'node:test';
@@ -524,7 +527,7 @@ test('home search adds a labeled historical hint only when the target is clearly
   bridge.send(JSON.stringify({type:'text',text:'找钥匙'}));
   bridge.send(JSON.stringify({type:'video_start',observe:true,id:'home-key',duration:30,goal:'找钥匙'}));await settle();bridge.scene.config.onReady();await settle();
   const answer=events.find(e=>e.type==='app.scene_fallback')?.answer||'';
-  assert.match(answer,/当前画面没有看到钥匙/);assert.match(answer,/要听一下吗/);assert.ok(!answer.includes('玄关桌上'));
+  assert.match(answer,/还没有确认到.*钥匙/);assert.match(answer,/要听一下吗/);assert.ok(!answer.includes('玄关桌上'));
   bridge.send(JSON.stringify({type:'text',text:'好'}));
   const history=events.findLast(e=>e.type==='app.memory_result').answer;assert.match(history,/上次记录钥匙在玄关桌上/);assert.match(history,/不能确认/);
   bridge.close();
@@ -868,4 +871,108 @@ test('fresh SDP transport identifies whether a connection stalled before TCP or 
     });
     await assert.rejects(promise,error=>error.connectionPhase===phase);
   }
+});
+
+
+test('rich memory preserves several relations, appearance and aliases across reload, append and relocation',()=>{
+  const data=storage(),memory=new Memory(data);
+  const rich={name:'小蓝',location:'书桌靠墙区域',appearance:'蓝色带把手的杯子',aliases:['水杯','马克杯'],relations:[{reference:'电脑',relation:'左侧'},{reference:'台灯',relation:'旁边'}],evidence:'user'};
+  memory.prepareBatch([rich]);assert.equal(memory.get('小蓝'),null);memory.confirm(memory.pending.token);
+  let next=new Memory(data);assert.equal(next.get('小蓝').relations.length,2);assert.match(next.answer('小蓝'),/电脑的左侧/);assert.match(next.answer('小蓝'),/台灯的旁边/);assert.equal(next.search('马克杯')[0].name,'小蓝');
+  next.prepareBatch([{...rich,relations:[{reference:'书本',relation:'后面'}],append:true}]);next.confirm(next.pending.token);
+  assert.equal(new Memory(data).get('小蓝').relations.length,3);
+  next.prepareBatch([{name:'小蓝',location:'床头柜上',relations:[{reference:'闹钟',relation:'右边'}],evidence:'user',append:false}]);next.confirm(next.pending.token);
+  const moved=new Memory(data).get('小蓝');assert.equal(moved.relations.length,1);assert.equal(moved.appearance,rich.appearance);assert.ok(moved.aliases.includes('马克杯'));assert.ok(!describeRecord(moved).includes('电脑'));
+});
+
+test('batch memory is atomic, cancels without writes, preserves legacy records and refuses ambiguous entries',()=>{
+  const data=storage(),memory=new Memory(data);memory.remember('记住，钥匙放在玄关桌上');
+  const entries=[{name:'蓝色水杯',location:'电脑左侧',evidence:'user'},{name:'耳机盒',location:'台灯右侧',evidence:'user'}];
+  memory.prepareBatch(entries);memory.confirm(memory.pending.token,true);assert.equal(memory.all().length,1);
+  memory.prepareBatch(entries);const save=data.setItem;data.setItem=()=>{throw Error('quota');};assert.throws(()=>memory.confirm(memory.pending.token));assert.equal(memory.all().length,1);data.setItem=save;
+  memory.confirm(memory.pending.token);assert.equal(new Memory(data).all().length,3);assert.throws(()=>memory.prepareBatch([{name:'这个',location:'桌上'}]));
+});
+
+const memoryRequest=body=>new Request('https://example.netlify.app/api/memory/plan',{method:'POST',headers:{Origin:'https://example.netlify.app'},body:JSON.stringify(body)});
+const planResponse=result=>Response.json({choices:[{message:{content:JSON.stringify(result)}}]});
+test('memory model receives all structured observations, not just the spoken summary, and never writes storage',async()=>{
+  const scene={observedAt:new Date().toISOString(),answer:'桌上有水杯。',objects:[{name:'蓝色水杯',position:'桌上',relations:[{reference:'电脑',relation:'左侧'},{reference:'台灯',relation:'旁边'}]},{name:'白色耳机盒',position:'电脑右侧'}]};
+  let payload;
+  const response=await planMemory(memoryRequest({text:'把这些都记下来',records:[],scene,cameraActive:true}),async(url,options)=>{
+    payload=JSON.parse(options.body);return planResponse({action:'propose',answer:'我整理了两件物品，请核对。',entries:scene.objects.map(o=>({name:o.name,location:o.position,relations:o.relations||[],evidence:'scene',observed_name:o.name}))});
+  },serverEnv);
+  const result=await response.json();assert.equal(response.status,200);assert.equal(result.entries.length,2);assert.equal(result.entries[0].relations.length,2);assert.equal(result.sceneAt,scene.observedAt);
+  const input=JSON.parse(payload.messages[1].content);assert.equal(input.scene.objects.length,2);assert.equal(input.scene.objects[0].relations.length,2);assert.equal(payload.model,'qwen3.6-flash');assert.ok(!JSON.stringify(result).includes(key));
+});
+
+test('memory planner rejects stale, absent or invented visual evidence, remote origins and malformed output',async()=>{
+  const entry={name:'水杯',location:'电脑左侧',evidence:'scene',observed_name:'水杯'};
+  for(const scene of [null,{observedAt:'2000-01-01T00:00:00Z',objects:[{name:'水杯',position:'桌上'}]},{observedAt:new Date().toISOString(),objects:[{name:'书',position:'桌上'}]}]){
+    const r=await planMemory(memoryRequest({text:'记住这个',records:[],scene,cameraActive:true}),async()=>planResponse({action:'propose',answer:'待确认',entries:[entry]}),serverEnv);assert.equal(r.status,502);
+  }
+  const evil=new Request('https://example.netlify.app/api/memory/plan',{method:'POST',headers:{Origin:'https://evil.example'},body:'{}'});assert.equal((await planMemory(evil,()=>assert.fail('no external origin'),serverEnv)).status,403);
+  const r=await planMemory(memoryRequest({text:'帮我记住水杯的位置',records:[]}),async()=>planResponse({action:'propose',answer:'待确认',entries:[{name:'水杯',location:'桌上'}]}),serverEnv);assert.equal(r.status,502);
+});
+
+test('visible alias candidates cannot be reported as absent and historical positions never enter visual targets',()=>{
+  const target=visualTarget({name:'小蓝',appearance:'蓝色带把手杯子',aliases:['马克杯','水杯'],location:'旧柜子',relations:[{reference:'旧闹钟',relation:'左边'}]});
+  assert.ok(!JSON.stringify(target).includes('旧柜子'));assert.ok(!JSON.stringify(target).includes('旧闹钟'));
+  const result=groundTarget({answer:'没看到小蓝。',objects:[{name:'蓝色马克杯',position:'电脑左侧'}],target_visible:false},target);
+  assert.equal(result.target_visible,null);assert.match(result.answer,/蓝色马克杯/);assert.match(result.answer,/还不能确认/);assert.ok(!result.answer.includes('没看到'));
+});
+
+test('both voices request identical structured vision and retain all relation data',async()=>{
+  const requests=[];
+  for(const fast of [false,true]){
+    const fixture=(fast?fastFixture:visualFixture)({fetch:async(url,options)=>{if(url==='/api/vision'){requests.push(JSON.parse(options.body));return Response.json({answer:'电脑左侧有一个蓝色水杯。',objects:[{name:'蓝色水杯',position:'桌上',aliases:['马克杯'],relations:[{reference:'电脑',relation:'左侧'}]}]});}return Response.json({configured:true,authenticated:true});}});
+    fixture.bridge.send(JSON.stringify({type:'video_start',observe:true,id:'voice-parity',duration:300}));await settle();fixture.bridge.scene.config.onReady();await settle();
+    assert.equal(fixture.bridge.currentScene.objects[0].relations.length,1);fixture.bridge.close();
+  }
+  assert.deepEqual(requests[0],requests[1]);assert.equal(requests[0].stream,false);
+});
+
+test('visual memory command takes a new snapshot, drafts multiple objects and persists only after spoken consent',async()=>{
+  let snapshots=0,plans=0;
+  const objects=[{name:'蓝色水杯',position:'桌上',appearance:'蓝色带把手',relations:[{reference:'电脑',relation:'左侧'},{reference:'台灯',relation:'旁边'}]},{name:'白色耳机盒',position:'桌上',relations:[{reference:'电脑',relation:'右侧'}]}];
+  const {runtime,bridge,events}=visualFixture({captureFrame:()=>{snapshots++;return '/9j/new-frame';},fetch:async(url,options)=>{
+    if(url==='/api/vision')return Response.json({answer:'电脑旁有一个杯子。',objects});
+    if(url==='/api/memory/plan'){plans++;const body=JSON.parse(options.body);assert.equal(body.scene.objects.length,2);return Response.json({action:'propose',answer:'我整理了两件物品。',sceneAt:body.scene.observedAt,entries:objects.map(o=>({name:o.name,location:o.position,...o,evidence:'scene'}))});}
+    return Response.json({configured:true,authenticated:true});
+  }});runtime.setPlace('home');
+  bridge.send(JSON.stringify({type:'video_start',id:'batch-memory',duration:300}));await settle();
+  bridge.send(JSON.stringify({type:'text',text:'把画面里的这些物品都记下来'}));assert.ok(bridge.scene.config);bridge.scene.config.onReady();await settle();await settle();
+  assert.equal(snapshots,1);assert.equal(plans,1);assert.equal(runtime.memory.all().length,0);assert.equal(runtime.memory.pending.entries.length,2);assert.match(events.findLast(e=>e.type==='app.memory_result').answer,/台灯的旁边/);
+  bridge.send(JSON.stringify({type:'text',text:'确认'}));assert.equal(new Memory(runtime.memory.storage).all().length,2);assert.equal(runtime.memory.get('蓝色水杯').relations.length,2);bridge.close();
+});
+
+test('semantic memory completion after a place switch or cancellation cannot create a proposal',async()=>{
+  let finish;
+  const {runtime,bridge}=visualFixture({fetch:async(url)=>url==='/api/memory/plan'?await new Promise(resolve=>finish=resolve):Response.json({configured:true,authenticated:true})});runtime.setPlace('home');
+  bridge.send(JSON.stringify({type:'text',text:'补充水杯在电脑的左侧'}));await settle();runtime.setPlace('explore');
+  finish(Response.json({action:'propose',answer:'待保存',entries:[{name:'水杯',location:'电脑左侧',evidence:'user'}]}));await settle();assert.equal(runtime.memory.pending,null);assert.equal(runtime.memory.all().length,0);bridge.close();
+});
+
+test('cloud readback cannot replace canonical text or execute memory tools during a voice-only replay',()=>{
+  const {bridge,events,runtime}=visualFixture();runtime.setPlace('home');bridge.active=true;
+  bridge.replayAnswer('水杯在桌上，电脑左侧，台灯旁边。');bridge.event({type:'response.done',response:{status:'cancelled'}},bridge.channel);
+  bridge.event({type:'response.created'},bridge.channel);bridge.event({type:'response.audio_transcript.done',transcript:'改写成了另一段话'},bridge.channel);
+  bridge.event({type:'response.done',response:{output:[{type:'function_call',call_id:'bad-replay-write',name:'prepare_memory',arguments:JSON.stringify({action:'record',name:'错误物品',location:'错误位置'})}]}},bridge.channel);
+  assert.ok(!events.some(e=>e.transcript==='改写成了另一段话'));assert.equal(runtime.memory.pending,null);bridge.close();
+});
+
+
+test('corrections about a visible object request fresh evidence instead of repeating a cached absence',()=>{
+  const {bridge,events}=visualFixture();bridge.send(JSON.stringify({type:'text',text:'它明明就在画面里，你看漏了'}));
+  assert.ok(events.some(e=>e.type==='app.observe'&&e.goal.includes('看漏')));bridge.close();
+});
+
+test('cancelling a semantic plan releases its scene so an unrelated new question is not blocked',async()=>{
+  let finish;
+  const {runtime,bridge,sent}=visualFixture({fetch:async url=>url==='/api/memory/plan'?await new Promise(resolve=>finish=resolve):Response.json({configured:true,authenticated:true})});runtime.setPlace('home');
+  const scene={observedAt:new Date().toISOString(),objects:[]};bridge.sceneCommit=scene;
+  void bridge.planMemory('补充水杯在电脑左边',scene,scene);await settle();
+  bridge.event({type:'input_audio_buffer.speech_started'},bridge.channel);assert.equal(bridge.sceneCommit,null);
+  bridge.event({type:'input_audio_buffer.speech_stopped'},bridge.channel);bridge.replyPending=false;bridge.listening=false;
+  bridge.send(JSON.stringify({type:'text',text:'你好'}));assert.ok(sent.some(e=>e.type==='response.create'));
+  finish(Response.json({action:'reply',answer:'过期回答'}));await settle();assert.equal(runtime.memory.pending,null);bridge.close();
 });

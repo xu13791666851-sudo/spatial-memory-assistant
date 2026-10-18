@@ -6,7 +6,7 @@ await fs.cp(path.join(root,'src/static'),path.join(dist,'static'),{recursive:tru
 await fs.copyFile(path.join(root,'web/assistant.css'),path.join(dist,'static/assistant.css'));
 await fs.copyFile(path.join(root,'web/memory.mjs'),path.join(dist,'static/memory.mjs'));
 await fs.copyFile(path.join(root,'web/runtime.mjs'),path.join(dist,'static/runtime.mjs'));
-for(const name of ['interaction','wake','context','stream','scene-speech','person-context','companion'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
+for(const name of ['interaction','wake','context','stream','scene-speech','person-context','companion','spatial-record','visual-grounding'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
 let js=await fs.readFile(path.join(root,'src/static/app.js'),'utf8');
 js=js.replace("const PAGE=document.body.dataset.page;","import {runtime} from './runtime.mjs';\nlet PAGE=document.body.dataset.page;\nawait runtime.loaded;");
 js=js.replace("const res=await fetch(path,", "if(window.spatialRuntime)return window.spatialRuntime.api(path,body,method);\n const res=await fetch(path,");
@@ -52,6 +52,7 @@ js=js.replace("delete:'删除全部记录'","delete:'删除这件物品的记录
 js=js.replace('本地程序没有准备好，请刷新或重新启动。','网页没有准备好，请刷新后重试。');
 js=js.replace("await stop();notify('连接已结束，麦克风和摄像头已关闭。');","await stop();if($('notice').hidden)notify('连接已结束，麦克风和摄像头已关闭。');");
 js=js.replace("import {runtime} from './runtime.mjs';","import {runtime} from './runtime.mjs';\nimport {ForegroundWake} from './wake.mjs';\nimport {SceneSpeech} from './scene-speech.mjs';\nlet sceneSpeech=null,sceneText='';");
+js=js.replace("import {runtime} from './runtime.mjs';","import {runtime} from './runtime.mjs';\nimport {describeRecord} from './spatial-record.mjs';");
 js=js.replace('function startVoice(){','function startVoice(){\n wake.suspend();');
 js=js.replace("notify('连接等待超时，请重新开始。');stop();}},30000)","notify('连接等待超时，请重新开始。');stop();}},45000)");
 js=js.replace('bubble(text,true);if(ready){','bubble(text,true);if(ready){stopPlayback();');
@@ -87,6 +88,9 @@ function finishVoice`);
 js=js.replace('cameraStream=stream;$(\'preview\').srcObject=stream;$(\'preview\').style.display=\'block\';$(\'camera-empty\').hidden=true;',`cameraStream=stream;$('preview').muted=true;$('preview').playsInline=true;$('preview').srcObject=stream;$('preview').style.display='block';$('camera-empty').hidden=true;cameraUI();await $('preview').play();if(generation!==cameraGeneration)return false;`);
 js=js.replace("stateUI('对话已结束，麦克风已关闭。');}","stateUI('对话已结束，麦克风已关闭。');if(wake.enabled&&!document.hidden)setTimeout(()=>{if(!sessionActive()&&!document.hidden)wake.resume();},600);}");
 js=js.replace("$('video-again').onclick=startVideo;","$('video-again').onclick=()=>startVideo('',true);");
+js=js.replace("position.textContent=item.location;","position.textContent=describeRecord(item);");
+js=js.replace("move:'记录新位置'","move:'记录新位置',batch:'保存物品与多个位置关系'");
+js=js.replace("if(ready&&!paused)wsSend({type:'text',text:'应用本地程序已执行用户点击的确认/取消，回执：'+result.answer+'。请据此继续，不要再次执行同一个操作。'});","if(ready&&!paused)socket?.acknowledgeMemory(result);");
 js=js.replace("case 'app.memory':",`case 'app.observe':if(!paused&&!videoId&&!videoOpening)await startVideo(event.goal,true);break;
  case 'app.introduction':localAnswer(event.answer);if(!$('screen-reader-mode').checked&&!$('read-aloud').checked&&!$('fast-describe').checked)speak(event.answer);break;
  case 'app.scene_begin':sceneText='';$('replay').disabled=true;sceneSpeech?.begin(event.token);break;
@@ -95,6 +99,7 @@ js=js.replace("case 'app.memory':",`case 'app.observe':if(!paused&&!videoId&&!vi
  case 'app.scene_answer':playSceneAnswer(event.answer,event.token,event.streamed);break;
  case 'app.scene_fallback':localAnswer(event.answer);if(!$('screen-reader-mode').checked&&!$('read-aloud').checked&&!$('fast-describe').checked)speak(event.answer);break;
  case 'app.device_voice_error':notify(event.message,0);break;
+ case 'app.memory_loading':$('camera-state').textContent='正在请千问整理物品特征和多个位置关系，尚未保存。';break;
  case 'app.scene_loading':$('camera-state').textContent='正在识别当前画面，请稍候。';$('scene-time').textContent='';break;
  case 'app.scene_ready':$('camera-state').textContent='识别完成，正在准备播报。你可以接着问物品的位置。';$('scene-time').textContent='本次画面时间：'+new Date(event.observedAt).toLocaleTimeString('zh-CN')+(Number.isFinite(event.durationMs)?' · 识别用时 '+(event.durationMs/1000).toFixed(1)+' 秒（含网络等待）':'');break;
  case 'app.place_changed':syncPlace(event.place);renderPending(null);localAnswer(event.answer);break;
@@ -155,7 +160,7 @@ template=template.replace(/密钥仅保存在当前页面内存中。建立连�
 template=template.replace('语音、视频识别效果及手机真机仍待测试；NFC 和房间定位尚未接入。','公网版使用浏览器实时通话。实际千问连接、摄像头及 iPhone 体验仍需真机验证；NFC 和房间定位尚未接入。');
 template=template.replace('<details class="disclosure"><summary>对话记录','<audio id="remote-audio" autoplay playsinline aria-label="助手语音" hidden></audio><details class="disclosure"><summary>对话记录');
 template=template.replace('<script src="/static/video-stream.js"></script><script src="/static/app.js"></script>','<script src="/static/video-stream.js"></script><script type="module" src="/static/app.js"></script>');
-template=template.replace('<div class="preferences">','<div class="preferences"><label for="answer-size">描述文字大小</label><select id="answer-size"><option value="18" selected>标准</option><option value="22">大字</option><option value="28">特大</option></select><label class="checkbox"><input id="fast-describe" type="checkbox" checked aria-describedby="device-voice-note">使用手机声音：描述、对话和重播</label><p id="device-voice-note" class="muted small">测试版默认使用手机或浏览器的中文朗读。千问负责理解问题和图片，不生成播报声音；文字生成完整句子后即可朗读。结束对话后可取消勾选，切回千问声音。手机重播无需重新连接千问。</p>');
+template=template.replace('<div class="preferences">','<div class="preferences"><label for="answer-size">描述文字大小</label><select id="answer-size"><option value="18" selected>标准</option><option value="22">大字</option><option value="28">特大</option></select><label class="checkbox"><input id="fast-describe" type="checkbox" checked aria-describedby="device-voice-note">使用手机声音：描述、对话和重播</label><p id="device-voice-note" class="muted small">测试版默认使用手机或浏览器的中文朗读。两种声音共用同一份看图与记忆结果，只改变播报方式。千问负责理解问题和图片，手机声音负责朗读。结束对话后可取消勾选，切回千问声音。手机重播无需重新连接千问。</p>');
 template=template.replace(/<p class="intro memory-only">[\s\S]*?<\/p>\s*<p class="intro video-only">[\s\S]*?<\/p>/,'<p class="intro">看物品、记位置，需要时直接问我。</p>');
 template=template.replace('<section class="answer-card"','<div class="place-control"><label for="place-mode">当前场景</label><select id="place-mode"><option value="explore">普通场景</option><option value="home">家</option></select><p class="muted small">也可以说“我在家”或“我出门了”。只有在家中场景才使用已确认的物品位置记录。</p></div><section class="answer-card"');
 template=template.replace('<details class="disclosure memory-only"><summary>我的物品记忆','<details id="home-memory-section" class="disclosure memory-only" hidden><summary>我的物品记忆');

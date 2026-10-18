@@ -1,4 +1,5 @@
-const clean=(value,max=120)=>{
+import {details,mergeDetails,describeRecord} from './spatial-record.mjs';
+const clean=(value,max=1200)=>{
   if(typeof value!=='string')throw Error('请提供有效的名称或位置。');
   value=value.trim().replace(/^[，。！？!?,\s]+|[，。！？!?,\s]+$/g,'');
   if(!value||value.length>max||/[\x00-\x1f]/.test(value))throw Error('请提供简短、有效的名称或位置。');
@@ -27,39 +28,57 @@ export class Memory {
   rows(){
     const raw=JSON.parse(this.storage.getItem(this.key)||'[]');
     if(!Array.isArray(raw))throw Error('本机记录无法读取，请先检查浏览器数据。');
-    return raw.filter(r=>r&&typeof r.name==='string'&&typeof r.location==='string'&&typeof r.recorded_at==='string'&&r.source==='MANUAL'&&r.state==='HISTORICAL'&&(!r.place||r.place==='home'));
+    return raw.filter(r=>r&&typeof r.name==='string'&&typeof r.location==='string'&&typeof r.recorded_at==='string'&&['MANUAL','USER_CONFIRMED_VISUAL'].includes(r.source)&&r.state==='HISTORICAL'&&(!r.place||r.place==='home'));
   }
   all(){const map=new Map();for(const r of this.rows())map.set(r.name,r);return [...map.values()].reverse();}
   get(name){return this.all().find(r=>r.name===name)||null;}
   search(query='',limit=5){
     const rows=this.all();if(!query.trim()||vagueName(query))return rows.slice(0,limit);
-    return rows.map(record=>({record,score:nameSimilarity(query,record.name)})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,limit).map(x=>x.record);
+    return rows.map(record=>({record,score:Math.max(nameSimilarity(query,record.name),...details(record).aliases.map(a=>nameSimilarity(query,a)),nameSimilarity(query,record.appearance||'')/2)})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,limit).map(x=>x.record);
   }
-  answer(name){const r=this.get(name);return r?`你之前提供的家中记录：${name}在${r.location}，放置时间为“${r.event_time}”，记录于${new Date(r.recorded_at).toLocaleString('zh-CN')}。还没有确认现在的位置。`:`没有找到${name}的家中位置记录。`;}
-  remember(text){
+  answer(name){const r=this.get(name);return r?`你之前提供的家中记录：${name}在${describeRecord(r)}，放置时间为“${r.event_time}”，记录于${new Date(r.recorded_at).toLocaleString('zh-CN')}。还没有确认现在的位置。`:`没有找到${name}的家中位置记录。`;}
+  remember(text,extra={}){
     const command=rememberCommand(text);if(!command)return null;
     const name=clean(command.name,40),location=clean(command.location),event_time=clean(command.event_time,80);
     if(vagueName(name))return {...this.result('你说的是哪一件？可以描述颜色、用途，或说“我记过什么”，我帮你一起找。'),saved:false};
     const rows=this.rows();
-    rows.push({id:this.uuid(),place:'home',name,location,event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'});
+    const old=this.get(name);
+    rows.push({id:this.uuid(),place:'home',name,location,event_time,...mergeDetails(old,extra,old?.location===location),recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'});
     this.storage.setItem(this.key,JSON.stringify(rows));
     this.last=name;this.pending=null;
     return {...this.result(`已记住：${name}在${location}。这是你提供的家中历史位置，需要时我会重新看眼前确认。`),saved:true};
   }
-  prepare({action,name,location='',event_time='时间未说明'}){
+  prepare({action,name,location='',event_time='时间未说明',...extra}){
     if(!['record','move','correct','delete'].includes(action))throw Error('不支持这个操作。');
     name=clean(name,40);if(action!=='delete')location=clean(location);event_time=clean(event_time,80);
     if(vagueName(name))throw Error('请先确认具体是哪一件物品。');
     if(action==='correct'&&!this.get(name))throw Error('没有可以更正的记录。');
-    this.last=name;this.pending={action,name,location,event_time,token:this.uuid(),expires:this.clock()+300000};
+    this.last=name;this.pending={action,name,location,event_time,...details(extra),token:this.uuid(),expires:this.clock()+300000};
     return {...this.result(`要${action==='delete'?'删除'+name+'的记录':'把'+name+'的位置记为'+location}吗？可以说“确认”或“取消”。`),saved:false};
+  }
+  prepareBatch(entries,{sceneAt=null,answer=''}={}){
+    if(!Array.isArray(entries)||!entries.length||entries.length>20)throw Error('请选择一到二十件清楚的物品。');
+    const cleaned=entries.map(e=>{
+      const name=clean(e.name,60),location=clean(e.location,600);if(vagueName(name))throw Error('请先确认具体物品。');
+      return {name,location,...details(e),append:e.append===true,evidence:e.evidence==='scene'?'scene':'user',recorded_at_before:this.get(name)?.recorded_at||null};
+    });
+    if(new Set(cleaned.map(e=>e.name)).size!==cleaned.length)throw Error('请先区分同名的物品。');
+    this.pending={action:'batch',name:cleaned.map(e=>e.name).join('、'),entries:cleaned,sceneAt,token:this.uuid(),expires:this.clock()+300000};
+    const summary=cleaned.map(e=>`${e.name}：${describeRecord(e)}`).join('；');
+    return {...this.result(`${answer?answer+' ':''}待保存：${summary}。这些物品和位置都对吗？说“确认”后才保存，也可以指出哪里不对。`),saved:false};
   }
   confirm(token,cancel=false){
     const p=this.pending;
     if(!p||p.token!==token||p.expires<=this.clock()){this.pending=null;throw Error('待确认操作已失效，请重新说明。');}
     if(cancel){this.pending=null;return this.result('已取消。');}
     const rows=this.rows();const old=this.get(p.name);
-    const next=p.action==='delete'?rows.filter(r=>r.name!==p.name):[...rows,{id:this.uuid(),place:'home',name:p.name,location:p.location,event_time:p.action==='correct'?old.event_time:p.event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'}];
+    if(p.action==='batch'){
+      if(p.entries.some(e=>(this.get(e.name)?.recorded_at||null)!==e.recorded_at_before))throw Error('记录已经变化，请重新核对。');
+      const entries=p.entries.map(e=>({id:this.uuid(),place:'home',name:e.name,location:e.location,...mergeDetails(this.get(e.name),e,e.append),event_time:'刚刚，经用户确认',recorded_at:new Date(this.clock()).toISOString(),observed_at:e.evidence==='scene'?p.sceneAt:null,source:e.evidence==='scene'?'USER_CONFIRMED_VISUAL':'MANUAL',state:'HISTORICAL'}));
+      this.storage.setItem(this.key,JSON.stringify([...rows,...entries]));this.last=entries.at(-1).name;this.pending=null;
+      return {...this.result('已保存'+entries.length+'件物品及其相对位置。你可以继续补充其他参照物，或问我刚记住了什么。'),saved:true};
+    }
+    const next=p.action==='delete'?rows.filter(r=>r.name!==p.name):[...rows,{id:this.uuid(),place:'home',name:p.name,location:p.location,...mergeDetails(old,p,p.action==='correct'||old?.location===p.location),event_time:p.action==='correct'?old.event_time:p.event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'}];
     this.storage.setItem(this.key,JSON.stringify(next));
     this.pending=null;return this.result(p.action==='delete'?'已删除这件物品的本机记录。':'已保存你提供的位置，尚未确认现在的位置。');
   }
