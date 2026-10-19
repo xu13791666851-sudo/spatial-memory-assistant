@@ -4,7 +4,13 @@
 
 面向视障用户的空间记忆助手，探索如何把画面、声音与记忆连接起来，让身边的信息更容易获取，让寻找有线索可循。
 
-[体验小忆](https://spatial-memory-xuziyi.netlify.app/video/) · [软硬件与无障碍交互方案](docs/unified-accessibility-plan.md)
+[体验小忆](https://i-see-you-spatial-memory.xu13791666851.workers.dev/video/) · [软硬件与无障碍交互方案](docs/unified-accessibility-plan.md) · [Cloudflare 部署说明](docs/cloudflare-deployment.md)
+
+## Cloudflare 迁移
+
+新站使用 Cloudflare Workers 同时承载网页与三个后台功能，界面、语音、图片理解、场景切换及本机记忆沿用原有实现。千问配置仅保存在 Cloudflare 后台。原 Netlify 部署方式继续保留，旧站没有删除；下文的 Netlify 管理说明供维护旧部署时参考。
+
+新旧网址的浏览器记录相互独立。此次迁移已确认没有需要保留的旧记录，新站继续使用原来的本机存储方式。手动发布不会自动关联 GitHub，自动同步需按 [部署说明](docs/cloudflare-deployment.md#关联-github-自动更新)连接仓库。
 
 ## 故事的起点：一句“它在哪里”
 
@@ -74,7 +80,7 @@
 
 ## 直接使用已上线的网页（推荐）
 
-[打开空间记忆助手](https://spatial-memory-xuziyi.netlify.app/video/)
+[打开空间记忆助手](https://i-see-you-spatial-memory.xu13791666851.workers.dev/video/)
 
 手机用 Safari 打开上述链接，电脑也可以用浏览器打开。无需登录或填写访问码。点击“开始对话”，允许摄像头和麦克风后即可尝试使用。
 
@@ -110,7 +116,7 @@
 
 此入口使用浏览器提供的语音识别，可能使用系统或在线服务；待机不建立千问会话。只在网页保持前台时工作，锁屏或离开网页会关闭唤醒。不支持或授权失败时保留“开始对话”按钮。不同 Safari／iPhone 的语音识别支持情况和真实唤醒效果仍需真机验证；建议用 Safari 打开，微信内置浏览器不作为本轮测试入口。
 
-**公网版的 API Key 已固定保存在 Netlify 后台，使用者不需要填写 API Key、业务空间 ID 或地域。** 公网版已取消访问码，任何拿到链接的人都可以使用，产生的模型用量计入项目管理者的账户。
+**公网版的 API Key 保存在当前部署平台后台（新站为 Cloudflare），使用者不需要填写 API Key、业务空间 ID 或地域。** 公网版已取消访问码，任何拿到链接的人都可以使用，产生的模型用量计入项目管理者的账户。
 
 体验公网版不需要安装 Python、启动电脑服务、连接同一 Wi-Fi 或安装本地证书。分享产品体验时发送上述网页链接；本 GitHub 链接用于查看和下载代码。
 
@@ -190,7 +196,7 @@ python src/run.py
 
 ## 开发者可选：iPhone 本地测试
 
-本节仅适用于从电脑启动的本地测试版。使用已上线的 Netlify 网页时，无须进行这些设置。
+本节仅适用于从电脑启动的本地测试版。使用已上线的网页时，无须进行这些设置。
 
 ```bash
 python -m pip install -r requirements-mobile.txt

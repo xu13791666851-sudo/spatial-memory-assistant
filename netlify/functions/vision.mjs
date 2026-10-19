@@ -21,7 +21,10 @@ export async function understand(request,fetcher=fetch,env=process.env){
       method:'POST',redirect:'error',signal,headers:{Authorization:'Bearer '+env.DASHSCOPE_API_KEY,'Content-Type':'application/json'},
       body:JSON.stringify({model:'qwen3.6-flash',enable_thinking:false,max_tokens:task?650:400,temperature:0.2,...(stream?{stream:true}:{response_format:{type:'json_object'}}),messages:[{role:'system',content:system+taskRules+PERSON_CONTEXT_RULES},{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+image}},{type:'text',text:goal?'请看当前图片，回答：'+goal:'请概括当前环境及主要物品之间的位置关系。'}]}]})
     });
-    if(!response.ok)return reply({detail:response.status===401||response.status===403?'视觉理解未获授权，请检查后台模型权限。':'视觉理解暂未完成，请稍后重新观察。'},502);
+    if(!response.ok){
+      let providerCode='';try{const error=await response.json();const value=error?.error?.code||error?.code;if(typeof value==='string'&&/^[A-Za-z0-9_.-]{1,100}$/.test(value))providerCode=value;}catch{}
+      return reply({detail:response.status===401||response.status===403?'视觉理解未获授权，请检查后台模型权限。':'视觉理解暂未完成，请稍后重新观察。',code:'vision_provider_error',provider_status:response.status,...(providerCode?{provider_code:providerCode}:{})},502);
+    }
     if(stream){
       const encoder=new TextEncoder();let cancelled=false;
       const output=new ReadableStream({async start(controller){

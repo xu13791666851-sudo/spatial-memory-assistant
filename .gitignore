@@ -21,4 +21,7 @@
 /dist/
 /node_modules/
 /.netlify/
+/.wrangler/
+.dev.vars
+.dev.vars.*
 
