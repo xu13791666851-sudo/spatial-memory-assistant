@@ -4,13 +4,15 @@
 
 面向视障用户的空间记忆助手，探索如何把画面、声音与记忆连接起来，让身边的信息更容易获取，让寻找有线索可循。
 
-[体验小忆](https://i-see-you-spatial-memory.xu13791666851.workers.dev/video/) · [软硬件与无障碍交互方案](docs/unified-accessibility-plan.md) · [Cloudflare 部署说明](docs/cloudflare-deployment.md)
+[体验小忆](https://i-see-you-spatial-memory.pages.dev/video/) · [软硬件与无障碍交互方案](docs/unified-accessibility-plan.md) · [Cloudflare 部署说明](docs/cloudflare-deployment.md)
 
 ## Cloudflare 迁移
 
-新站使用 Cloudflare Workers 同时承载网页与三个后台功能，界面、语音、图片理解、场景切换及本机记忆沿用原有实现。千问配置仅保存在 Cloudflare 后台。原 Netlify 部署方式继续保留，旧站没有删除；下文的 Netlify 管理说明供维护旧部署时参考。
+新站通过 Cloudflare Pages 入口打开，由同一个 Cloudflare Worker 承载网页与三个后台功能，界面、语音、图片理解、场景切换及本机记忆沿用原有实现。千问配置仅保存在 Cloudflare 后台。原 Netlify 部署方式继续保留，旧站没有删除；下文的 Netlify 管理说明供维护旧部署时参考。
 
 新旧网址的浏览器记录相互独立。此次迁移已确认没有需要保留的旧记录，新站继续使用原来的本机存储方式。手动发布不会自动关联 GitHub，自动同步需按 [部署说明](docs/cloudflare-deployment.md#关联-github-自动更新)连接仓库。
+
+手机访问请使用上方的 `pages.dev` 入口。原 `workers.dev` 入口在部分网络中无法连接；新入口通过 Cloudflare 内部连接取得同一份网页与后台，浏览器不需要访问原域名。后续主分支自动发布后，新入口同步使用最新版本。
 
 ## 故事的起点：一句“它在哪里”
 
@@ -80,7 +82,7 @@
 
 ## 直接使用已上线的网页（推荐）
 
-[打开空间记忆助手](https://i-see-you-spatial-memory.xu13791666851.workers.dev/video/)
+[打开空间记忆助手](https://i-see-you-spatial-memory.pages.dev/video/)
 
 手机用 Safari 打开上述链接，电脑也可以用浏览器打开。无需登录或填写访问码。点击“开始对话”，允许摄像头和麦克风后即可尝试使用。
 

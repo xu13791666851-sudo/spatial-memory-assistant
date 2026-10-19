@@ -8,7 +8,9 @@
     "build:cloudflare": "node scripts/build-cloudflare.mjs",
     "dev:cloudflare": "wrangler dev",
     "deploy:cloudflare": "wrangler deploy",
-    "test:cloudflare": "node --test tests/cloudflare.test.mjs"
+    "test:cloudflare": "node --test tests/cloudflare.test.mjs tests/pages-entry.test.mjs",
+    "build:pages-entry": "node scripts/build-pages-entry.mjs",
+    "deploy:pages-entry": "npm run build:pages-entry && wrangler pages deploy --cwd cloudflare/pages --project-name i-see-you-spatial-memory --branch main"
   },
   "engines": {
     "node": ">=22"
