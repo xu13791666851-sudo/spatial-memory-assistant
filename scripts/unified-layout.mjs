@@ -28,7 +28,13 @@ export function applyUnifiedLayout(js,template){
   template=template.replace('</head>','<link rel="stylesheet" href="/static/unified-home.css"><meta name="theme-color" content="#f6f7f2"></head>');
   template=template.replace(/<select id="video-duration">[\s\S]*?<\/select>/,'<select id="video-duration"><option value="300" selected>5 分钟</option><option value="600">10 分钟</option></select>').replace('每轮对话最长 10 分钟','每轮对话最长 15 分钟').replace('点击开始，查看周围','点击开始，准备好后再提问');
   js="import {UnifiedHome} from './unified-home.mjs';\nimport {interfaceCommand} from './interface-commands.mjs';\n"+js;
+  // Local records and layout controls must work while the network check waits.
+  js=js.replace('await runtime.loaded;',"let accessReady=false;runtime.loaded.then(()=>{accessReady=true;});");
+  js=js.replace('(async()=>{try{const status=window.spatialRuntime.status();','(async()=>{try{await runtime.loaded;const status=window.spatialRuntime.status();');
+  js=js.replace('function startVoice(options={}){','function startVoice(options={}){\n if(!accessReady)return runtime.loaded.then(()=>startVoice(options));');
+  js=js.replace('async function startVideo(goal="",describe=!!goal){','async function startVideo(goal="",describe=!!goal){\n await runtime.loaded;');
   js=js.replace('async function sendText(text){text=text.trim();if(!text)return;',"async function sendText(text){text=text.trim();if(!text)return;const command=interfaceCommand(text);if(command&&(!['confirm','cancel-confirmation'].includes(command.type)||pending)){bubble(text,true);unifiedHome.command(command);return;}");
+  js=js.replace('return;}if(!ready&&configured){if(!await startVoice','return;}await runtime.loaded;if(!ready&&configured){if(!await startVoice');
   js=js.replace("async function handleCloud(event){if(event.replay)return;switch(event.type){","async function handleCloud(event){if(event.replay)return;if(event.type==='app.interface_command'){bubble(event.text,true);unifiedHome.command(event.action);return;}switch(event.type){");
   js=js.replace(/function renderMemories\(items\)\{[\s\S]*?\r?\nfunction renderPending/,"function renderMemories(items){unifiedHome.renderMemories();}\nfunction renderPending");
   js=js.replace("$('chat').focus()","$('latest-answer').focus()");
