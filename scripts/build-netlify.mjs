@@ -1,6 +1,7 @@
 import {applyConversationLayout} from './conversation-layout.mjs';
 import {applyUnifiedLayout} from './unified-layout.mjs';
 import {applyRetroLayout} from './retro-layout.mjs';
+import {applySceneInputLayout} from './scene-input-layout.mjs';
 import {colors,frameSvg,icon} from '../web/retro-design.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -10,6 +11,7 @@ await fs.cp(path.join(root,'src/static'),path.join(dist,'static'),{recursive:tru
 await fs.copyFile(path.join(root,'web/assistant.css'),path.join(dist,'static/assistant.css'));
 await fs.copyFile(path.join(root,'web/unified-home.css'),path.join(dist,'static/unified-home.css'));
 for(const name of ['retro-pixel.css','retro-design.mjs'])await fs.copyFile(path.join(root,'web',name),path.join(dist,'static',name));
+await fs.copyFile(path.join(root,'web/text-composer.mjs'),path.join(dist,'static/text-composer.mjs'));
 for(const [name,fill,stroke]of [['frame',colors.paper,colors.ink],['card',colors.pale,colors.ink],['task',colors.peach,colors.ink],['primary',colors.blue,colors.ink]])await fs.writeFile(path.join(dist,'static',`retro-${name}.svg`),frameSvg(fill,stroke));
 await fs.writeFile(path.join(dist,'static/retro-logo.svg'),icon('logo').replace('class="pixel-icon "','width="24" height="24"'));
 await fs.mkdir(path.join(dist,'designs'),{recursive:true});
@@ -181,6 +183,7 @@ js=js.replace("$('camera-preview').hidden=!cameraStream;","$('camera-preview').h
 ({js,template}=applyConversationLayout(js,template));
 ({js,template}=applyUnifiedLayout(js,template));
 ({js,template}=applyRetroLayout(js,template));
+({js,template}=applySceneInputLayout(js,template));
 await fs.writeFile(path.join(dist,'static/app.js'),js);
 let html=template;
 for(const [key,value]of Object.entries(values))html=html.replaceAll(`{{${key}}}`,value);

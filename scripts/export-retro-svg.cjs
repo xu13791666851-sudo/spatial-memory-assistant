@@ -12,7 +12,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
  await page.route('**/*',async r=>{const u=new URL(r.request().url());if(u.hostname!=='design.test')return r.abort();if(u.pathname==='/api/access')return r.fulfill({json:{configured:true,authenticated:true}});assert.ok(!u.pathname.startsWith('/api/'),'Unexpected model request');let body=await fs.readFile(path.join(root,'dist',u.pathname==='/'?'index.html':u.pathname),'utf8');if(u.pathname.endsWith('/app.js'))body+='\nwindow.design={runtime,conversation,unifiedHome,setActive:()=>{ready=true;paused=false;actionUI();}};';return r.fulfill({body,contentType:u.pathname.endsWith('.svg')?'image/svg+xml':u.pathname.endsWith('.css')?'text/css':/\.(js|mjs)$/.test(u.pathname)?'text/javascript':'text/html'});});
  await page.goto('https://design.test/');await page.waitForFunction(()=>!!window.design);await page.clock.setFixedTime(new Date('2026-10-19T06:20:00Z'));
  await page.evaluate(({photo})=>{
-  const d=window.design;document.getElementById('screen-reader-mode').checked=true;d.runtime.taskState=()=>({target:'蓝色水杯'});d.setActive();
+  const d=window.design;document.getElementById('screen-reader-mode').checked=true;d.runtime.setPlace('home');document.getElementById('place-mode').value='home';d.runtime.taskState=()=>({target:'蓝色水杯'});d.setActive();
   d.conversation.add('帮我找蓝色水杯。',true);d.conversation.add('上次记在电脑左侧。我再看看现在的位置。');d.conversation.add('再看一下。',true);d.conversation.add('看到蓝色水杯，在电脑左侧、台灯旁边。');
   document.getElementById('latest-answer').textContent='看到蓝色水杯，在电脑左侧、台灯旁边。';
   const image=document.createElement('img');image.id='design-camera-photo';image.src=photo;image.alt='图稿示例摄像头画面';image.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:cover';document.getElementById('camera-preview').prepend(image);document.getElementById('camera-empty').hidden=true;
@@ -41,6 +41,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
    else if(opaque(s.backgroundColor)||b>0)bg=`<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" rx="${rx}" fill="${opaque(s.backgroundColor)?s.backgroundColor:'none'}" stroke="${b?s.borderLeftColor:'none'}" stroke-width="${b}"/>`;
    if(el.tagName==='IMG')bg+=`<image href="${esc(el.src)}" x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" preserveAspectRatio="xMidYMid slice"/>`;
    if(el.classList.contains('chat-speaker')&&el.closest('.assistant'))bg+=logo.replace('<svg ',`<svg x="${r.x}" y="${r.y+1}" width="14" height="14" `);
+   if(el.tagName==='SELECT'){const size=parseFloat(s.fontSize),label=el.selectedOptions[0]?.label||'';return bg+`<text x="${r.x+parseFloat(s.paddingLeft)+b}" y="${r.y+r.height/2+size*.35}" fill="${s.color}" font-family="${esc(s.fontFamily)}" font-size="${s.fontSize}" font-weight="${s.fontWeight}">${esc(label)}</text><path d="m${r.right-18} ${r.y+r.height/2-2} 4 4 4-4" fill="none" stroke="${s.color}" stroke-width="1.5"/>`;}
    let content='';let children=Array.from(el.childNodes);
    if(el.tagName==='DETAILS'&&!el.open)children=children.filter(c=>c.nodeType===1&&c.tagName==='SUMMARY');
    children.sort((a,b)=>(a.nodeType===1?parseInt(getComputedStyle(a).zIndex)||0:0)-(b.nodeType===1?parseInt(getComputedStyle(b).zIndex)||0:0));

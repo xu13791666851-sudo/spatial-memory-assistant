@@ -118,6 +118,12 @@ test('session context resolves a follow-up target and clears it when the place c
   assert.equal(placeIntent('小忆，我到家了'),'home');
   assert.equal(placeIntent('我出门了'),'explore');
 });
+test('scene commands accept natural speech without misreading object questions',()=>{
+  for(const text of ['请切换到家中场景','我回家了','小忆，我现在在家','帮我切换到家里'])assert.equal(placeIntent(text),'home');
+  for(const text of ['切换到普通场景','我现在出门了','进入户外模式','请切到外出场景'])assert.equal(placeIntent(text),'explore');
+  for(const text of ['我在家里的水杯在哪','普通场景有什么物品','记住家里的钥匙','到家后帮我找杯子'])assert.equal(placeIntent(text),null);
+});
+
 test('SDP exchange permits only same-origin and validated Alibaba workspace targets',async()=>{
   let calls=0;const noFetch=async()=>{calls++;throw Error('unexpected network');};
   assert.equal((await exchange(request(config,'https://evil.example'),noFetch,serverEnv)).status,403);

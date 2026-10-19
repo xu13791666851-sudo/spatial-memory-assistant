@@ -17,7 +17,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
  });
  await page.goto('https://ui.test/');await page.waitForFunction(()=>!!window.testUI);
  await page.evaluate(()=>document.getElementById('screen-reader-mode').checked=true);
- await page.click('#open-accessibility');await page.selectOption('#place-mode','home');await page.click('#settings-close');
+ await page.selectOption('#place-mode','home');
  await page.evaluate(async()=>{
   const ui=window.testUI;await ui.handleCloud({type:'conversation.item.input_audio_transcription.completed',transcript:'帮我记住蓝色玻璃杯的位置'});
   await ui.handleCloud({type:'app.memory_result',answer:'已记住：蓝色玻璃杯在木桌上、纸巾盒旁边。',saved:true,items:[],pending:null});
