@@ -1,6 +1,7 @@
 import {access} from '../netlify/functions/access.mjs';
 import {exchange} from '../netlify/functions/realtime-sdp.mjs';
 import {understand} from '../netlify/functions/vision.mjs';
+import {readEvents} from '../web/stream.mjs';
 
 const security={
  'Cache-Control':'no-store',
@@ -22,8 +23,23 @@ export function createHandler(fetcher=fetch){
  // Workers supports manual/follow redirects, but not the Fetch "error" mode.
  // Preserve the existing no-redirect rule without forwarding provider keys.
  const upstream=async(url,init)=>{
-  const response=await fetcher(url,{...init,redirect:'manual'});
+  // Receive structured vision output incrementally as well: the upstream's
+  // buffered response can fail at the edge before it sends any response bytes.
+  const structured=String(url).endsWith('/compatible-mode/v1/chat/completions')&&typeof init.body==='string'&&!JSON.parse(init.body).stream;
+  const body=structured?JSON.stringify({...JSON.parse(init.body),stream:true}):init.body;
+  const response=await fetcher(url,{...init,body,redirect:'manual'});
   if(response.status>=300&&response.status<400){await response.body?.cancel();throw new TypeError('Provider redirect rejected');}
+  if(structured&&response.ok&&response.headers.get('Content-Type')?.includes('text/event-stream')){
+   let content='';
+   for await(const event of readEvents(response.body)){
+    if(event?.error)throw new TypeError('Provider stream failed');
+    const delta=event?.choices?.[0]?.delta?.content;
+    if(typeof delta==='string')content+=delta;
+    if(content.length>10000){await response.body.cancel().catch(()=>{});throw new TypeError('Provider result too large');}
+   }
+   if(!content.trim())throw new TypeError('Empty provider result');
+   return Response.json({choices:[{message:{content}}]});
+  }
   return response;
  };
  return async(request,env)=>{

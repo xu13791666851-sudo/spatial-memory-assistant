@@ -64,3 +64,18 @@ test('Cloudflare-compatible redirects never forward credentials to another host'
  const handle=createHandler(async(url,init)=>{calls++;assert.equal(init.redirect,'manual');assert.ok(url.startsWith('https://test-space.cn-beijing.maas.aliyuncs.com/'));return new Response(null,{status:307,headers:{Location:'https://untrusted.test/collect'}});});
  const response=await handle(request('/api/vision',{image:'/9j/AAAA'}),env());assert.equal(response.status,502);assert.equal(calls,1);assert.ok(!(await response.text()).includes(env().DASHSCOPE_API_KEY));
 });
+
+test('structured visual results arrive incrementally while the client keeps its validated JSON contract',async()=>{
+ const result=JSON.stringify({answer:'水杯在台灯旁。',objects:[{name:'台灯',position:'桌上'}],target_visible:true,memory_candidate:{unique:true,location_supported:true,anchor:'台灯',location:'桌上，台灯旁'},next_step:null});
+ const handle=createHandler(async(url,init)=>{
+  const body=JSON.parse(init.body);assert.equal(body.stream,true);assert.equal(body.response_format.type,'json_object');
+  const chunks=[result.slice(0,30),result.slice(30)].map(content=>'data: '+JSON.stringify({choices:[{delta:{content}}]})+'\n\n').join('')+'data: [DONE]\n\n';
+  return new Response(chunks,{headers:{'Content-Type':'text/event-stream'}});
+ });
+ const response=await handle(request('/api/vision',{image:'/9j/AAAA',task:{target:'水杯',remember:true}}),env());assert.equal(response.status,200);const data=await response.json();assert.equal(data.memory_candidate.location_supported,true);assert.equal(data.source,'current_camera_frame');assert.equal(data.target_visible,true);
+});
+
+test('an incomplete structured provider stream never becomes a successful memory candidate',async()=>{
+ const handle=createHandler(async()=>new Response('data: '+JSON.stringify({choices:[{delta:{content:'{"answer":"未完成'}}]})+'\n\n',{headers:{'Content-Type':'text/event-stream'}}));
+ const response=await handle(request('/api/vision',{image:'/9j/AAAA',task:{target:'水杯',remember:true}}),env());assert.equal(response.status,502);assert.ok(!(await response.text()).includes('memory_candidate'));
+});
