@@ -4,7 +4,16 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build-netlify.mjs",
-    "test:web": "node --test tests/web.test.mjs"
+    "test:web": "node --test tests/web.test.mjs",
+    "build:cloudflare": "node scripts/build-cloudflare.mjs",
+    "dev:cloudflare": "wrangler dev",
+    "deploy:cloudflare": "wrangler deploy",
+    "test:cloudflare": "node --test tests/cloudflare.test.mjs"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.1"
+  }
 }
