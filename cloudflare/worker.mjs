@@ -44,6 +44,8 @@ export function createHandler(fetcher=fetch){
  };
  return async(request,env)=>{
  const path=new URL(request.url).pathname;
+ // Service-bound entry points also need the current deployment's assets.
+ if(!path.startsWith('/api/')&&env.ASSETS)return secure(await env.ASSETS.fetch(request));
  const route={
   '/api/access':{methods:['GET','POST','DELETE'],limit:'ACCESS_LIMITER',run:()=>access(request,env)},
   '/api/realtime/sdp':{methods:['POST'],limit:'VOICE_LIMITER',run:()=>exchange(request,upstream,env)},
