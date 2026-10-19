@@ -12,6 +12,7 @@ export function applyRetroLayout(js,template){
  template=template.replace('<h2 id="answer-title">小忆</h2>',`<h2 id="answer-title">${icon('logo')}<span>小忆</span></h2>`);
  template=template.replace('>展开全文</button>',`><span>展开全文</span>${icon('chevron')}</button>`);
  template=template.replace('>用文字交流</summary>',`>${icon('text')}<span>用文字交流</span></summary>`);
+ template=template.replace('<div id="camera-empty">','<div id="camera-empty"><button id="camera-start-target" type="button" aria-label="开启摄像头和语音对话"></button>');
  // Advanced controls remain available in Aa; leave the primary header uncluttered.
  const start=template.indexOf('<details id="more-tools"'),end=template.indexOf('</main>',start);
  if(start<0||end<0)throw Error('Missing advanced controls');
@@ -24,8 +25,9 @@ export function applyRetroLayout(js,template){
  template=template.replace('<div id="chat-empty">','</details><div id="chat-empty">');
  template=template.replace('<footer class="records-footer"><span>关闭后继续当前任务</span>',`<footer class="records-footer"><button id="pixel-records-home" type="button">${icon('home')}<span>回到首页</span></button>`);
  js="import {installRetroSkin} from './retro-design.mjs';\n"+js;
+ js=js.replace('function cameraUI(){',"function cameraUI(){\n $('camera-start-target').hidden=!!cameraStream||videoOpening;$('camera-start-target').disabled=videoOpening;");
  const marker='new MutationObserver(()=>$(\'dialogue-state\')';
  if(!js.includes(marker))throw Error('Missing installed homepage marker');
- js=js.replace(marker,"installRetroSkin({document,state:()=>({active:sessionActive(),ready,paused})});$('pixel-records-home').onclick=()=>unifiedHome.close();\n"+marker);
+ js=js.replace(marker,"installRetroSkin({document,state:()=>({active:sessionActive(),ready,paused})});$('pixel-records-home').onclick=()=>unifiedHome.close();\n$('camera-start-target').onclick=async()=>{if(cameraStream||videoOpening)return;try{if(paused){await $('pause').onclick();if(paused||!ready)return;}await startVideo();}catch(err){notify(err.message);}};\n"+marker);
  return {js,template};
 }

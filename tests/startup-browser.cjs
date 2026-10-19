@@ -4,6 +4,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
 (async()=>{const browser=await chromium.launch({headless:true,channel:'chrome',args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});try{
 const page=await browser.newPage({viewport:{width:390,height:844}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
 await page.addInitScript(()=>{
+ window.mediaRequests=[];const media=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=constraints=>{window.mediaRequests.push(constraints);return media(constraints);};
  window.sent=[];window.RTCPeerConnection=class{
   constructor(){this.connectionState='new';this.iceGatheringState='complete';}
   addTransceiver(kind){let bytes=0;return {sender:{replaceTrack:async()=>{},getStats:async()=>new Map([['audio',{type:'outbound-rtp',kind:'audio',bytesSent:bytes+=100}]]),getParameters:()=>({})}};}
@@ -23,12 +24,22 @@ await page.route('**/*',async r=>{const u=new URL(r.request().url());if(u.hostna
 });
 await page.goto('https://ui.test/');await page.waitForFunction(()=>document.querySelector('#main-toggle').textContent==='开始');
 await page.evaluate(()=>{const drawer=document.createElement('div');drawer.dataset.netlifyDeployId='fixture';drawer.style.cssText='position:fixed;inset:0;z-index:999999';document.body.append(drawer);});
-await page.click('#main-toggle');await page.waitForFunction(()=>document.querySelector('#chat').textContent.includes('你好，我是小忆。现在可以和我说话了。'));
+// The existing zoom/collapse buttons must not bubble into the new start entry.
+await page.click('#expand-video');await page.click('#expand-video');await page.click('#collapse-camera');await page.click('#collapse-camera');assert.equal(await page.evaluate(()=>window.mediaRequests.length),0);
+await page.getByRole('button',{name:'开启摄像头和语音对话',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#chat').textContent.includes('你好，我是小忆。现在可以和我说话了。'));
+assert.equal(await page.locator('#camera-start-target').isVisible(),false);assert.equal(await page.evaluate(()=>window.mediaRequests.filter(c=>c.video).length),1);assert.equal(await page.evaluate(()=>!!document.getElementById('preview').srcObject),true);
 await page.waitForTimeout(800);assert.equal(vision,0);assert.equal(await page.locator('#chat .chat-turn').count(),1);
 await page.locator('#text-tools').evaluate(e=>e.open=true);await page.fill('#message','眼前有什么');await page.locator('#chat-form button').click();
 await page.locator('#video-again').waitFor({state:'visible'});assert.equal(vision,1);await page.click('#video-again');await page.waitForFunction(()=>document.querySelector('#video-again').hidden);await page.locator('#video-again').waitFor({state:'visible'});assert.equal(vision,2);
 await page.click('#end-conversation');await page.locator('#text-tools').evaluate(e=>e.open=true);await page.fill('#message','你好');await page.locator('#chat-form button').click();await page.waitForFunction(()=>document.querySelector('#chat').textContent.includes('可以，我在听。'));
 assert.equal(await page.locator('#chat').getByText('你好，我是小忆。现在可以和我说话了。',{exact:true}).count(),0);assert.equal(vision,2);
 await page.click('#end-conversation');deny=true;await page.click('#main-toggle');await page.waitForFunction(()=>document.querySelector('#notice').textContent==='测试连接被拒绝');assert.equal(await page.locator('#chat').getByText('你好，我是小忆。现在可以和我说话了。',{exact:true}).count(),0);
+// Native-button keyboard activation and paused-camera reopening use the same flow.
+deny=false;await page.getByRole('button',{name:'开启摄像头和语音对话',exact:true}).focus();await page.keyboard.press('Enter');await page.waitForFunction(()=>document.querySelector('#main-toggle').textContent==='暂停'&&!document.getElementById('pause').disabled);assert.equal(await page.evaluate(()=>!!document.getElementById('preview').srcObject),true);
+await page.click('#main-toggle');
+await page.waitForFunction(()=>document.querySelector('#main-toggle').textContent==='继续');
+await page.getByRole('button',{name:'开启摄像头和语音对话',exact:true}).focus();await page.keyboard.press('Space');
+await page.waitForFunction(()=>document.querySelector('#main-toggle').textContent==='暂停'&&!!document.getElementById('preview').srcObject);
+assert.equal(await page.locator('#camera-start-target').isVisible(),false);assert.equal(vision,2);await page.click('#end-conversation');
 assert.deepEqual(errors,[]);console.log('PASS: unobstructed start, RTC handshake, microphone readiness, greeting without automatic vision, requested vision, visual failure/retry, text auto-connect, rejected connection without false greeting');
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

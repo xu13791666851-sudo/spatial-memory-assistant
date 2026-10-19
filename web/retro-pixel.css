@@ -35,3 +35,7 @@ body[data-layout=video] .camera-panel{height:auto;min-height:0;flex:1}body[data-
 /* Speaker names sit above the bubbles, matching the selected SVG composition. */
 .chat-turn.user .chat-speaker{color:var(--ink)}.chat-speaker{margin-bottom:6px}.chat-bubble p{font-weight:600}
 @media(min-height:700px) and (max-width:799px){body[data-page=assistant] .camera-panel{height:clamp(220px,38svh,350px);min-height:220px}}
+/* The idle preview is a second start entry; existing overlay controls stay above it. */
+body[data-page=assistant] #camera-start-target{position:absolute;inset:0;z-index:1;width:100%;height:100%;min-height:0;padding:0;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none;cursor:pointer}
+body[data-page=assistant] #camera-start-target:focus-visible{outline-offset:-5px}
+#camera-empty #video-again{position:relative;z-index:3}
