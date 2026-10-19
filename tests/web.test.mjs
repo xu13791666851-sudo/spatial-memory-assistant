@@ -13,8 +13,52 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {readEvents} from '../web/stream.mjs';
 import {SceneSpeech} from '../web/scene-speech.mjs';
+import {interfaceCommand} from '../web/interface-commands.mjs';
 
 const storage=()=>{const map=new Map();return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,v),map};};
+
+test('interface commands are narrow and leave ordinary object and cancellation requests alone',()=>{
+  assert.deepEqual(interfaceCommand('小忆，请打开记录。'),{type:'records',tab:'chat'});
+  assert.deepEqual(interfaceCommand('我记过什么'),{type:'records',tab:'memory',read:true});
+  assert.deepEqual(interfaceCommand('放大画面'),{type:'camera',view:'video'});
+  assert.equal(interfaceCommand('水杯在记录本旁边'),null);
+  assert.equal(interfaceCommand('不要记住'),null);
+  assert.deepEqual(interfaceCommand('取消'),{type:'cancel-confirmation'});
+});
+
+test('record browsing commands preserve a pending observation and current find target',()=>{
+  const {runtime}=runtimeFixture(),bridge=new runtime.Bridge();bridge.mode='assistant';
+  bridge.requestCurrentView=()=>{};bridge.send(JSON.stringify({type:'text',text:'找蓝色水杯'}));
+  assert.equal(runtime.taskState().target,'蓝色水杯');
+  let aborted=false;const scene={controller:{abort(){aborted=true;}}};bridge.sceneCommit=scene;
+  const events=[];bridge.onmessage=e=>events.push(JSON.parse(e.data));
+  bridge.send(JSON.stringify({type:'text',text:'打开记录'}));
+  assert.equal(aborted,false);assert.equal(bridge.sceneCommit,scene);assert.equal(runtime.taskState().target,'蓝色水杯');
+  bridge.event({type:'conversation.item.input_audio_transcription.completed',transcript:'放大画面'});
+  assert.equal(events.filter(e=>e.type==='app.interface_command').length,2);
+  assert.equal(aborted,false);assert.equal(runtime.taskState().target,'蓝色水杯');bridge.close();
+});
+
+test('direct memory edits persist renames, preserve placement time and reject stale or colliding records',()=>{
+  const data=storage(),m=new Memory(data);m.remember('记住，水杯放在电脑左侧');m.remember('记住，耳机盒放在书本前面');
+  const original=m.get('水杯');const result=m.edit({id:original.id,recorded_at:original.recorded_at,name:'蓝色水杯',location:'电脑左侧，台灯旁边，书本前面',appearance:'蓝色带把手'});
+  assert.equal(result.saved,true);assert.equal(new Memory(data).all().length,2);assert.equal(m.get('蓝色水杯').appearance,'蓝色带把手');
+  assert.equal(m.get('蓝色水杯').event_time,original.event_time);assert.equal(m.get('水杯').name,'蓝色水杯');
+  assert.throws(()=>m.edit({...original,recorded_at:original.recorded_at,name:'水杯',location:'旧位置'}),/已经变化/);
+  const current=m.get('蓝色水杯');assert.throws(()=>m.edit({...current,name:'耳机盒',location:'别处'}),/同名/);
+});
+
+test('failed memory edit leaves the original record and never acknowledges persistence',()=>{
+  const data=storage(),m=new Memory(data);m.remember('记住，钥匙放在桌上');const original=m.get('钥匙');
+  data.setItem=()=>{throw Error('quota');};assert.throws(()=>m.edit({...original,location:'抽屉'}));assert.equal(m.get('钥匙').location,'桌上');
+});
+
+test('editing legacy memories without ids uses the original name instead of another same-time record',()=>{
+  const data=storage(),records=['钥匙','眼镜'].map(name=>({name,location:'桌上',event_time:'昨天',recorded_at:'2026-10-13T08:00:00.000Z',source:'MANUAL',state:'HISTORICAL'}));
+  data.setItem('spatial-memory.records.v1',JSON.stringify(records));const m=new Memory(data);
+  m.edit({recorded_at:records[0].recorded_at,original_name:'钥匙',name:'蓝色钥匙',location:'玄关抽屉'});
+  assert.equal(m.get('眼镜').location,'桌上');assert.equal(m.get('蓝色钥匙').location,'玄关抽屉');assert.equal(m.all().length,2);
+});
 const key='sk-offline-test-only-xxxxxxxxxxxxxxxx';
 const request=(body,origin='https://example.netlify.app')=>new Request('https://example.netlify.app/api/realtime/sdp',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
 const config={key,workspace:'ws-test-fixture',region:'beijing',sdp:'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n'};
@@ -285,8 +329,8 @@ test('quiet camera startup waits for a spoken observation request',async()=>{
   assert.equal(events.filter(e=>e.type==='app.scene_fallback').length,1);bridge.close();
 });
 
-test('two and five minute observations are accepted and preserve manual stop',async()=>{
-  for(const duration of [120,300]){
+test('two, five and ten minute observations are accepted and preserve manual stop',async()=>{
+  for(const duration of [120,300,600]){
     const {bridge}=visualFixture();bridge.send(JSON.stringify({type:'video_start',id:'long-view',duration}));await settle();
     assert.equal(bridge.videoId,'long-view');bridge.send(JSON.stringify({type:'video_stop',id:'long-view'}));
     assert.equal(bridge.videoId,null);assert.equal(bridge.closed,false);bridge.close();
@@ -294,7 +338,7 @@ test('two and five minute observations are accepted and preserve manual stop',as
 });
 
 test('long frame timers continue past 30 seconds and stop exactly at their configured deadline',()=>{
-  for(const duration of [120,300]){
+  for(const duration of [120,300,600]){
     let now=0,nextId=0,stops=0,frames=0;const tasks=new Map();
     const add=(fn,delay,interval=0)=>{const id=++nextId;tasks.set(id,{fn,at:now+delay,interval});return id;};
     const context={module:{exports:{}},performance:{now:()=>now},setTimeout:(fn,ms)=>add(fn,ms),clearTimeout:id=>tasks.delete(id),setInterval:(fn,ms)=>add(fn,ms,ms),clearInterval:id=>tasks.delete(id)};

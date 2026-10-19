@@ -30,6 +30,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
  assert.equal(await page.locator('#chat').getByText('可以把镜头对准桌子吗？',{exact:true}).count(),1);
  assert.equal(await page.locator('#chat').getByText('重复朗读',{exact:true}).count(),0);
  assert.equal(await page.locator('.chat-tag').filter({hasText:'已存入物品记忆'}).count(),1);
+ await page.click('#open-records');
  await page.evaluate(()=>window.testUI.setReady(true));assert.equal(await page.locator('#main-toggle').textContent(),'暂停对话');assert.ok(await page.locator('#end-conversation').isVisible());
  await page.evaluate(()=>window.testUI.setReady(true,true));assert.equal(await page.locator('#main-toggle').textContent(),'继续对话');await page.evaluate(()=>window.testUI.setReady(false));
  const camera=await page.locator('#camera-preview').boundingBox();
@@ -40,11 +41,11 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
  await page.locator('#chat-jump').waitFor({state:'visible'});await page.click('#chat-jump');
  assert.ok(await page.locator('#chat').evaluate(e=>e.scrollTop>0));
  assert.deepEqual(await page.locator('#camera-preview').boundingBox(),camera);
- await page.click('#expand-video');assert.equal(await page.locator('body').getAttribute('data-layout'),'video');assert.equal(await page.locator('#chat').isVisible(),false);
- await page.click('#return-chat');await page.click('#expand-chat');assert.equal(await page.locator('body').getAttribute('data-layout'),'history');assert.ok((await page.locator('#camera-preview').boundingBox()).height<camera.height);
+ await page.click('#close-records');await page.click('#expand-video');assert.equal(await page.locator('body').getAttribute('data-layout'),'video');assert.equal(await page.locator('#chat').isVisible(),false);
+ await page.click('#expand-video');await page.click('#open-records');await page.click('#expand-chat');assert.equal(await page.locator('body').getAttribute('data-layout'),'home');assert.deepEqual(await page.locator('#camera-preview').boundingBox(),camera);
  await page.click('#expand-chat');
  await page.screenshot({path:process.env.UI_SCREENSHOT||'/tmp/spatial-conversation-ui.png'});
- await page.reload();await page.waitForFunction(()=>!!window.testUI);assert.ok(await page.locator('#chat').getByText('刚刚到达的新回答',{exact:true}).isVisible());
+ await page.reload();await page.waitForFunction(()=>!!window.testUI);await page.click('#open-records');assert.ok(await page.locator('#chat').getByText('刚刚到达的新回答',{exact:true}).isVisible());
  await page.evaluate(()=>{document.getElementById('screen-reader-mode').checked=true;localStorage.setItem('spatial-memory.records.v1','[]');window.testUI.conversation.begin();window.testUI.conversation.add('新的对话');});
  const old=await page.locator('#chat-session option').last().getAttribute('value');await page.selectOption('#chat-session',old);
  await page.evaluate(()=>window.testUI.conversation.add('当前对话又有新消息'));

@@ -33,6 +33,20 @@ export class Memory {
     if(rows.length>1)return `找到多条可能的记录：${rows.map(r=>r.name+'在'+r.location).join('；')}。你要找哪一个？`;
     const r=rows[0];return r?`你上次让我记住的家中记录：${r.name}在${r.location}，记录于${new Date(r.recorded_at).toLocaleString('zh-CN')}。还没有确认现在的位置。`:`没有找到${name}的家中位置记录。`;
   }
+  edit({id,recorded_at,original_name,name,location,appearance=''}){
+    const current=this.all().find(r=>(r.id?r.id===id:id==null&&typeof original_name==='string'&&r.name===original_name)&&r.recorded_at===recorded_at);
+    if(!current)throw Error('这条记录已经变化，请重新打开后核对。');
+    name=clean(normalizeName(name),40);location=clean(location,600);
+    if(this.all().some(r=>r!==current&&normalizeName(r.name)!==normalizeName(current.name)&&normalizeName(r.name)===normalizeName(name)))throw Error('已经有同名物品，请用颜色或外观区分。');
+    if(typeof appearance!=='string'||appearance.length>150)throw Error('请提供简短的外观说明。');
+    const renamed=normalizeName(name)!==normalizeName(current.name);
+    const rows=this.rows().filter(r=>!renamed||normalizeName(r.name)!==normalizeName(current.name));
+    const record={...current,id:this.uuid(),object_id:current.object_id||current.id,name,location,appearance:appearance.trim(),recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'};
+    // Changing the placement cannot retain stale observed spatial relations.
+    if(location!==current.location){delete record.relations;delete record.anchor;delete record.observed_at;}
+    this.storage.setItem(this.key,JSON.stringify([...rows,record]));this.last=name;this.pending=null;
+    return {...this.result('已保存你修改的“'+name+'”记录，尚未确认现在的位置。'),saved:true,record};
+  }
   saveVisual(name,candidate,observedAt){
     name=clean(normalizeName(name),40);
     const location=clean(candidate.location),anchor=clean(candidate.anchor,60);
@@ -59,7 +73,7 @@ export class Memory {
     if(action!=='delete')location=clean(location);event_time=clean(event_time,80);
     if(action==='correct'&&!this.get(name))throw Error('没有可以更正的记录。');
     this.last=name;this.pending={action,name,location,event_time,token:this.uuid(),expires:this.clock()+300000};
-    return {answer:'请点击页面上的确认按钮，确认后才会保存或删除。',pending:this.pending,saved:false};
+    return {answer:'请说“确认”或点击确认按钮，确认后才会保存或删除。',pending:this.pending,saved:false};
   }
   confirm(token,cancel=false){
     const p=this.pending;

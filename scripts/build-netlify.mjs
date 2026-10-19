@@ -1,14 +1,16 @@
 import {applyConversationLayout} from './conversation-layout.mjs';
+import {applyUnifiedLayout} from './unified-layout.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 const root=process.cwd(),dist=path.join(root,'dist');
 await fs.mkdir(path.join(dist,'static'),{recursive:true});
 await fs.cp(path.join(root,'src/static'),path.join(dist,'static'),{recursive:true});
 await fs.copyFile(path.join(root,'web/assistant.css'),path.join(dist,'static/assistant.css'));
+await fs.copyFile(path.join(root,'web/unified-home.css'),path.join(dist,'static/unified-home.css'));
 await fs.copyFile(path.join(root,'web/memory.mjs'),path.join(dist,'static/memory.mjs'));
 await fs.copyFile(path.join(root,'web/find-dialogue.mjs'),path.join(dist,'static/find-dialogue.mjs'));
 await fs.copyFile(path.join(root,'web/runtime.mjs'),path.join(dist,'static/runtime.mjs'));
-for(const name of ['interaction','wake','context','stream','scene-speech','person-context','conversation'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
+for(const name of ['interaction','wake','context','stream','scene-speech','person-context','conversation','unified-home','interface-commands'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
 let js=await fs.readFile(path.join(root,'src/static/app.js'),'utf8');
 js=js.replace("const PAGE=document.body.dataset.page;","import {runtime} from './runtime.mjs';\nlet PAGE=document.body.dataset.page;\nawait runtime.loaded;");
 js=js.replace("const res=await fetch(path,", "if(window.spatialRuntime)return window.spatialRuntime.api(path,body,method);\n const res=await fetch(path,");
@@ -170,6 +172,7 @@ template=template.replace('<p>摄像头未开启</p>','<p>点击开始，查看�
 // Show an idle placeholder in the same large camera area.
 js=js.replace("$('camera-preview').hidden=!cameraStream;","$('camera-preview').hidden=false;");
 ({js,template}=applyConversationLayout(js,template));
+({js,template}=applyUnifiedLayout(js,template));
 await fs.writeFile(path.join(dist,'static/app.js'),js);
 let html=template;
 for(const [key,value]of Object.entries(values))html=html.replaceAll(`{{${key}}}`,value);

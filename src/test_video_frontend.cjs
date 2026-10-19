@@ -28,7 +28,8 @@ function timerTests(){
  stream.start(30,()=>{count++;return true;},()=>stops++);stream.stop();const before=count;clock.advance(60000);assert.equal(count,before);
  stream.start(10,()=>false,()=>stops++);clock.advance(10000);assert.equal(stops,2);assert.equal(clock.timers.size,0);
  stream.start(30,()=>true,()=>stops++);clock.time+=40000;clock.advance(1000);assert.equal(stream.running,false);
- assert.throws(()=>stream.start(600,()=>true,()=>{}));
+ stream.start(600,()=>true,()=>stops++);clock.advance(600000);assert.equal(stream.running,false);assert.equal(clock.timers.size,0);
+ assert.throws(()=>stream.start(900,()=>true,()=>{}));
  const errorClock=new Clock();const errors=new FrameStream(errorClock.options());let failure='';
  errors.start(30,()=>{throw Error('capture failed');},reason=>failure=reason);
  assert.match(failure,/未完成/);assert.equal(errorClock.timers.size,0);
