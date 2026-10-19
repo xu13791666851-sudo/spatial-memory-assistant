@@ -2,9 +2,9 @@ const PLACE_LABEL={explore:'普通场景',home:'家'};
 const cleanText=value=>String(value||'').trim().replace(/[。！？!?]+$/,'');
 
 export function placeIntent(text){
-  const value=cleanText(text).replace(/^(?:你好)?(?:小忆|小意|小易)[，,\s]*/,'').replace(/\s/g,'');
-  if(/^(我到家了|我在家了?|切换到家|切到家|进入家中场景|使用家中记忆)$/.test(value))return 'home';
-  if(/^(我出门了|我在外面|切换到普通场景|切到普通场景|退出家中场景)$/.test(value))return 'explore';
+  const value=cleanText(text).replace(/^(?:你好)?(?:小忆|小意|小易)[，,\s]*/,'').replace(/\s/g,'').replace(/^(?:请|帮我)/,'');
+  if(/^(我(?:现在)?(?:到|回|在)家了?|(?:切换|切|进入)(?:到)?(?:家|家里|家中|家庭)(?:模式|场景)?|使用家中记忆)$/.test(value))return 'home';
+  if(/^(我(?:现在)?(?:出门了|在外面|在户外)|(?:切换|切|进入)(?:到)?(?:普通|外出|户外|外面)(?:模式|场景)?|退出家中场景)$/.test(value))return 'explore';
   return null;
 }
 

@@ -1,22 +1,47 @@
-/* Hosted assistant: use the viewport for the complete camera field. */
-:root{--answer-size:18px}
-body[data-page=assistant] main{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto minmax(0,1fr);gap:10px;max-width:1200px;min-height:100svh;height:100svh;height:100dvh;padding:calc(10px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom))}
-body[data-page=assistant] .page-header{grid-column:1;grid-row:1;align-self:center}
-body[data-page=assistant] h1{font-size:18px;line-height:1.4}
-body[data-page=assistant] .session{grid-column:1/-1;grid-row:2;display:flex;flex-direction:column;min-width:0;min-height:0;gap:10px}
-body[data-page=assistant] .sr-only{top:0;left:0;margin:0!important}
-body[data-page=assistant] .camera-panel{flex:1;min-height:160px;display:flex}
-body[data-page=assistant] .preview{width:100%;height:100%;min-height:160px;aspect-ratio:auto;border-radius:14px;margin:0;background:#14251f}
+/* Hosted conversation layout. Keep media mounted while only resizing its panel. */
+:root{--answer-size:18px;--app-height:100dvh}
+body[data-page=assistant]{overflow:hidden;background:#f7faf7}
+body[data-page=assistant] main{display:flex;flex-direction:column;gap:8px;position:relative;max-width:1000px;min-height:0;height:100svh;height:var(--app-height);padding:calc(10px + env(safe-area-inset-top)) 12px calc(8px + env(safe-area-inset-bottom));overflow:hidden}
+body[data-page=assistant] .page-header{display:flex;gap:10px;padding-right:68px;flex:none;min-height:46px}
+body[data-page=assistant] h1{font-size:18px;line-height:1.4;flex:1}
+.scene-picker{margin:0}.scene-picker select{font-size:15px;min-height:44px;max-width:112px;border-radius:22px;background:var(--soft);border:1px solid var(--line);padding:6px 10px}
+body[data-page=assistant] .session{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;gap:8px}
+body[data-page=assistant] .camera-panel{flex:0 0 28%;min-height:120px;max-height:300px;display:flex;position:relative}
+body[data-page=assistant] .preview{width:100%;height:100%;min-height:0;aspect-ratio:auto;border-radius:16px;margin:0;background:#14251f;overflow:hidden;position:relative}
 body[data-page=assistant] .preview video{width:100%;height:100%;position:absolute;inset:0;object-fit:contain}
-body[data-page=assistant] .preview #camera-empty{color:#e3ece6;padding:20px}
-body[data-page=assistant] .answer-card{flex:0 0 auto;display:block;min-height:0;max-height:25svh;overflow:auto;overscroll-behavior:contain;margin:0;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:12px}
-body[data-page=assistant] .answer-card p{font-size:var(--answer-size);line-height:1.45;margin:0}
-body[data-page=assistant] .main-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;flex-shrink:0}
-body[data-page=assistant] .main-button,body[data-page=assistant] .replay-button{min-height:60px;padding:12px 8px;font-size:18px;border-radius:12px;margin:0}
-body[data-page=assistant] .main-button.active:hover{background:var(--soft);color:var(--ink)}
-body[data-page=assistant] .more-tools{grid-column:2;grid-row:1;align-self:center;position:relative;margin:0;z-index:4}
-body[data-page=assistant] .more-tools>summary{min-height:44px;padding:10px 12px;font-size:15px;border-radius:10px}
-body[data-page=assistant] .more-content{position:absolute;right:0;top:100%;width:min(520px,calc(100vw - 24px));max-height:calc(100svh - 92px);overflow:auto;background:#fff;border:1px solid var(--line);box-shadow:0 12px 35px #14251f26;border-radius:14px;padding:16px}
-body[data-page=assistant] .pending{grid-column:1/-1;grid-row:2;align-self:start;z-index:3;max-height:70svh;overflow:auto}
-body[data-page=assistant] .notice{bottom:calc(82px + env(safe-area-inset-bottom))}
-@media(max-height:500px){body[data-page=assistant] main{height:auto;min-height:100svh}body[data-page=assistant] .camera-panel{min-height:55svh}}
+body[data-page=assistant] #camera-empty{color:#e3ece6;padding:20px;font-size:17px}
+#expand-video{position:absolute;right:8px;bottom:8px;z-index:2;min-height:44px;padding:8px 12px;font-size:14px;background:#fff;color:#172b25;box-shadow:0 2px 8px #0002}
+#conversation-panel{display:flex;flex-direction:column;flex:1;min-height:0;position:relative;overflow:hidden}
+.chat-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:none}.chat-heading h2{font-size:16px;margin:0}.chat-heading button{font-size:14px;border:0;background:transparent;min-height:44px;padding:6px}
+.chat-history-tools{display:flex;gap:6px;flex:none;align-items:center;margin-bottom:4px}.chat-history-tools select{flex:1;min-width:0;font-size:13px;border:0;background:transparent;color:var(--muted);min-height:40px;padding:4px}.chat-history-tools button{font-size:13px;min-height:40px;padding:4px 8px;border:0;background:transparent;color:var(--muted)}
+body[data-page=assistant] #chat{overflow:auto;overscroll-behavior:contain;min-height:0;max-height:none;flex:1;padding:6px 4px;scrollbar-width:thin}
+.chat-turn{max-width:92%;margin-bottom:16px}.chat-turn.user{margin-left:auto}.chat-speaker{font-size:13px;color:var(--muted);margin:0 2px 5px}.chat-turn.user .chat-speaker{text-align:right}
+.chat-bubble{background:#fff;border:1px solid var(--line);border-radius:4px 16px 16px 16px;padding:12px 14px;overflow-wrap:anywhere}.chat-turn.user .chat-bubble{background:#e5efe7;border-color:transparent;border-radius:16px 4px 16px 16px}
+.chat-bubble p{font-size:var(--answer-size);line-height:1.6;margin:0;white-space:pre-wrap}.chat-tag{display:inline-block;background:#eaf2ec;color:#31523c;padding:3px 7px;border-radius:5px;font-size:12px;margin-bottom:7px}
+.message-replay{min-height:44px;padding:5px 8px;font-size:13px;color:var(--muted);background:transparent;border:0}
+#chat-empty{font-size:16px;color:var(--muted);padding:12px 6px}#chat-empty p{margin:0 0 10px}
+#chat-jump{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:14px;min-height:44px;background:#fff;box-shadow:0 3px 12px #14251f26;z-index:2}
+body[data-page=assistant] .answer-card{display:none;flex:none;max-height:27%;overflow:auto;margin:0;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:12px}
+body[data-page=assistant] .answer-card p{font-size:var(--answer-size);line-height:1.5;margin:0}
+#return-chat{font-size:14px;margin-top:6px;min-height:44px}
+.conversation-footer{flex:none;border-top:1px solid var(--line);padding-top:6px;position:relative;background:#f7faf7}
+#dialogue-state{font-size:13px;color:var(--muted);margin:0 0 4px;text-align:center;max-height:42px;overflow:auto}
+body[data-page=assistant] .main-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+body[data-page=assistant] .main-button,body[data-page=assistant] .replay-button{min-height:52px;padding:10px 6px;font-size:17px;border-radius:12px;margin:0}
+body[data-page=assistant] .main-button.active{background:var(--accent);color:white}
+#text-tools{margin:0;border:0}#text-tools summary{font-size:14px;min-height:40px;padding:6px 0;width:fit-content}#text-tools p{display:none}#text-tools label{font-size:14px}#text-tools form{padding-bottom:8px}#text-tools .input-row{display:flex;gap:6px}#text-tools input{min-width:0;font-size:18px}
+#end-conversation{position:absolute;right:0;top:30px;border:0;background:transparent;color:var(--muted);font-size:14px;min-height:40px;padding:6px}
+body[data-page=assistant] .more-tools{position:absolute;right:12px;top:calc(11px + env(safe-area-inset-top));margin:0;z-index:5}
+body[data-page=assistant] .more-tools>summary{min-height:44px;padding:10px;font-size:14px;border-radius:10px}
+body[data-page=assistant] .more-content{position:absolute;right:0;top:100%;width:min(520px,calc(100vw - 24px));max-height:calc(var(--app-height) - 100px);overflow:auto;background:#fff;border:1px solid var(--line);box-shadow:0 12px 35px #14251f26;border-radius:14px;padding:16px}
+body[data-page=assistant] .pending{position:absolute;top:65px;left:12px;right:12px;z-index:4;max-height:70%;overflow:auto;background:#fff}
+body[data-page=assistant] .notice{bottom:calc(140px + env(safe-area-inset-bottom))}
+body[data-layout=history] .camera-panel{flex-basis:112px;min-height:90px;max-height:112px}
+body[data-layout=video] .camera-panel{flex:1;max-height:none;min-height:100px}
+body[data-layout=video] #conversation-panel{display:none}
+body[data-layout=video] .answer-card{display:block}
+@media(min-width:800px) and (min-height:550px){body[data-page=assistant] .session{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:minmax(0,1fr) auto;gap:16px}body[data-page=assistant] .camera-panel{grid-column:1;grid-row:1;max-height:none;min-height:0}#conversation-panel{grid-column:2;grid-row:1}.conversation-footer{grid-column:1/-1;grid-row:2}body[data-layout=video] .camera-panel{grid-column:1/-1}body[data-layout=video] .answer-card{grid-column:1/-1;grid-row:2;max-height:160px}body[data-layout=video] .conversation-footer{grid-row:3}body[data-layout=history] .session{grid-template-columns:1fr 2fr}}
+@media(max-height:570px){body[data-page=assistant] .camera-panel{flex-basis:95px;min-height:70px}.chat-heading{display:none}.chat-history-tools{margin:0}body[data-page=assistant] main{gap:4px}#dialogue-state{display:none}#end-conversation{top:5px}body[data-layout=video] .camera-panel{flex:1}.conversation-footer{padding-top:2px}}
+
+/* The injected preview feedback drawer otherwise covers the mobile controls. */
+body[data-page=assistant] > [data-netlify-deploy-id]{display:none!important}
