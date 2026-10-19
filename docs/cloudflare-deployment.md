@@ -2,6 +2,8 @@
 
 项目可部署到 Cloudflare Workers，网页静态资源和三个后台接口放在同一个站点。千问继续提供语音及图片理解；无需在 Cloudflare 上运行大模型，也无需 GPU。
 
+当前正式入口：[打开 I SEE YOU](https://i-see-you-spatial-memory.xu13791666851.workers.dev/video/)。
+
 ## 部署内容
 
 | 内容 | 迁移方式 |
