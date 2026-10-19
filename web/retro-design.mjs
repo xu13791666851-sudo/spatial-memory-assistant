@@ -17,6 +17,16 @@ const parts={
  wave:'<path d="M3 11v3M8 7v11M13 3v19M18 6v13M23 10v5"/>'
 };
 export function icon(name,extra=''){return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="pixel-icon ${extra}" aria-hidden="true" focusable="false" fill="none" stroke="${name==='logo'?'none':'currentColor'}" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">${parts[name]||parts.logo}</svg>`;}
+// Draw the wordmark in local vector pixels so it never depends on a web font.
+export function wordmark(){
+ const glyphs={I:['11111','00100','00100','00100','00100','00100','11111'],S:['01111','10000','10000','01110','00001','00001','11110'],E:['11111','10000','10000','11110','10000','10000','11111'],Y:['10001','10001','01010','00100','00100','00100','00100'],O:['01110','10001','10001','10001','10001','10001','01110'],U:['10001','10001','10001','10001','10001','10001','01110']};
+ let x=0,path='';
+ for(const letter of 'I SEE YOU'){
+  if(letter===' '){x+=4;continue;}
+  glyphs[letter].forEach((row,y)=>Array.from(row).forEach((pixel,col)=>{if(pixel==='1')path+=`M${x+col} ${y}h1v1h-1z`;}));x+=6;
+ }
+ return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${x-1} 7" class="pixel-wordmark-art" aria-hidden="true" focusable="false" fill="currentColor" shape-rendering="crispEdges"><path d="${path}"/></svg>`;
+}
 export function installRetroSkin({document,state}){
  const $=id=>document.getElementById(id);
  const label=(el,name,text)=>{if(!el)return;const key=name+'|'+text;if(el.dataset.pixelLabel===key&&el.querySelector('.pixel-icon')&&el.textContent===text)return;el.dataset.pixelLabel=key;el.innerHTML=icon(name)+`<span>${text}</span>`;};
