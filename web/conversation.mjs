@@ -58,7 +58,7 @@ export class ConversationView{
     const bubble=doc.createElement('div');bubble.className='chat-bubble';
     const tag=doc.createElement('span');tag.className='chat-tag';
     const p=doc.createElement('p');p.textContent=message.text;
-    bubble.append(label,tag,p);box.append(bubble);
+    bubble.append(tag,p);box.append(label,bubble);
     let replay=null;if(message.role==='assistant'){replay=doc.createElement('button');replay.type='button';replay.className='message-replay';replay.textContent='重听这一条';replay.setAttribute('aria-label','重听小忆在'+clock(message.at)+'的回答');replay.onclick=()=>this.onReplay(message.text);box.append(replay);}
     const node={box,p,tag,replay,message};this.nodes.set(message.id,node);this.chat.append(box);this.updateNode(node);return p;
   }

@@ -19,9 +19,9 @@ await page.route('**/*',async r=>{const u=new URL(r.request().url());if(u.hostna
  if(u.pathname==='/api/access')return r.fulfill({json:{configured:true,authenticated:true}});
  if(u.pathname==='/api/realtime/sdp')return deny?r.fulfill({status:403,json:{detail:'测试连接被拒绝'}}):r.fulfill({body:'v=0\r\n'});
  if(u.pathname==='/api/vision'){vision++;return r.fulfill({status:502,json:{detail:'测试画面超时'}});}
- const file=path.join(process.cwd(),'dist',u.pathname==='/'?'index.html':u.pathname);return r.fulfill({body:await fs.readFile(file),contentType:u.pathname.endsWith('.css')?'text/css':/\.(js|mjs)$/.test(u.pathname)?'text/javascript':'text/html'});
+ const file=path.join(process.cwd(),'dist',u.pathname==='/'?'index.html':u.pathname);return r.fulfill({body:await fs.readFile(file),contentType:u.pathname.endsWith('.svg')?'image/svg+xml':u.pathname.endsWith('.css')?'text/css':/\.(js|mjs)$/.test(u.pathname)?'text/javascript':'text/html'});
 });
-await page.goto('https://ui.test/');await page.waitForFunction(()=>document.querySelector('#main-toggle').textContent==='开始对话');
+await page.goto('https://ui.test/');await page.waitForFunction(()=>document.querySelector('#main-toggle').textContent==='开始');
 await page.evaluate(()=>{const drawer=document.createElement('div');drawer.dataset.netlifyDeployId='fixture';drawer.style.cssText='position:fixed;inset:0;z-index:999999';document.body.append(drawer);});
 await page.click('#main-toggle');await page.waitForFunction(()=>document.querySelector('#chat').textContent.includes('你好，我是小忆。现在可以和我说话了。'));
 await page.waitForTimeout(800);assert.equal(vision,0);assert.equal(await page.locator('#chat .chat-turn').count(),1);

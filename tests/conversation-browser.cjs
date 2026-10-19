@@ -13,11 +13,11 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
   const file=path.join(process.cwd(),'dist',url.pathname==='/'?'index.html':url.pathname);
   let body=await fs.readFile(file,'utf8');
   if(url.pathname==='/static/app.js')body+='\nwindow.testUI={handleCloud,conversation,stop,ready:()=>ready,setReady:(value,p=false)=>{ready=value;paused=p;actionUI();}};';
-  await route.fulfill({body,contentType:url.pathname.endsWith('.css')?'text/css':/\.(mjs|js)$/.test(url.pathname)?'text/javascript':'text/html'});
+  await route.fulfill({body,contentType:url.pathname.endsWith('.svg')?'image/svg+xml':url.pathname.endsWith('.css')?'text/css':/\.(mjs|js)$/.test(url.pathname)?'text/javascript':'text/html'});
  });
  await page.goto('https://ui.test/');await page.waitForFunction(()=>!!window.testUI);
  await page.evaluate(()=>document.getElementById('screen-reader-mode').checked=true);
- await page.selectOption('#place-mode','home');
+ await page.click('#open-accessibility');await page.selectOption('#place-mode','home');await page.click('#settings-close');
  await page.evaluate(async()=>{
   const ui=window.testUI;await ui.handleCloud({type:'conversation.item.input_audio_transcription.completed',transcript:'帮我记住蓝色玻璃杯的位置'});
   await ui.handleCloud({type:'app.memory_result',answer:'已记住：蓝色玻璃杯在木桌上、纸巾盒旁边。',saved:true,items:[],pending:null});
@@ -31,8 +31,8 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
  assert.equal(await page.locator('#chat').getByText('重复朗读',{exact:true}).count(),0);
  assert.equal(await page.locator('.chat-tag').filter({hasText:'已存入物品记忆'}).count(),1);
  await page.click('#open-records');
- await page.evaluate(()=>window.testUI.setReady(true));assert.equal(await page.locator('#main-toggle').textContent(),'暂停对话');assert.ok(await page.locator('#end-conversation').isVisible());
- await page.evaluate(()=>window.testUI.setReady(true,true));assert.equal(await page.locator('#main-toggle').textContent(),'继续对话');await page.evaluate(()=>window.testUI.setReady(false));
+ await page.evaluate(()=>window.testUI.setReady(true));assert.equal(await page.locator('#main-toggle').textContent(),'暂停');assert.ok(await page.locator('#end-conversation').isVisible());
+ await page.evaluate(()=>window.testUI.setReady(true,true));assert.equal(await page.locator('#main-toggle').textContent(),'继续');await page.evaluate(()=>window.testUI.setReady(false));
  const camera=await page.locator('#camera-preview').boundingBox();
  await page.evaluate(()=>{for(let i=0;i<20;i++)window.testUI.conversation.add('历史消息 '+i+'，这是一条可以回顾的对话记录。',i%2===0);});
  await page.locator('#chat').evaluate(e=>{e.scrollTop=0;e.dispatchEvent(new Event('scroll'));});
@@ -42,12 +42,12 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
  assert.ok(await page.locator('#chat').evaluate(e=>e.scrollTop>0));
  assert.deepEqual(await page.locator('#camera-preview').boundingBox(),camera);
  await page.click('#close-records');await page.click('#expand-video');assert.equal(await page.locator('body').getAttribute('data-layout'),'video');assert.equal(await page.locator('#chat').isVisible(),false);
- await page.click('#expand-video');await page.click('#open-records');await page.click('#expand-chat');assert.equal(await page.locator('body').getAttribute('data-layout'),'home');assert.deepEqual(await page.locator('#camera-preview').boundingBox(),camera);
+ await page.click('#expand-video');await page.click('#open-records');await page.locator('.record-history').evaluate(e=>e.open=true);await page.click('#expand-chat');assert.equal(await page.locator('body').getAttribute('data-layout'),'home');assert.deepEqual(await page.locator('#camera-preview').boundingBox(),camera);
  await page.click('#expand-chat');
  await page.screenshot({path:process.env.UI_SCREENSHOT||'/tmp/spatial-conversation-ui.png'});
  await page.reload();await page.waitForFunction(()=>!!window.testUI);await page.click('#open-records');assert.ok(await page.locator('#chat').getByText('刚刚到达的新回答',{exact:true}).isVisible());
  await page.evaluate(()=>{document.getElementById('screen-reader-mode').checked=true;localStorage.setItem('spatial-memory.records.v1','[]');window.testUI.conversation.begin();window.testUI.conversation.add('新的对话');});
- const old=await page.locator('#chat-session option').last().getAttribute('value');await page.selectOption('#chat-session',old);
+ await page.locator('.record-history').evaluate(e=>e.open=true);const old=await page.locator('#chat-session option').last().getAttribute('value');await page.selectOption('#chat-session',old);
  await page.evaluate(()=>window.testUI.conversation.add('当前对话又有新消息'));
  assert.equal(await page.locator('#chat-session').inputValue(),old);assert.equal(await page.locator('#chat').getByText('当前对话又有新消息',{exact:true}).count(),0);assert.ok(await page.locator('#chat-jump').isVisible());
  await page.click('#chat-jump');assert.ok(await page.locator('#chat').getByText('当前对话又有新消息',{exact:true}).isVisible());
