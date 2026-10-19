@@ -1,7 +1,9 @@
-import {icon} from '../web/retro-design.mjs';
+import {icon,wordmark} from '../web/retro-design.mjs';
 export function applyRetroLayout(js,template){
  template=template.replace('</head>','<link rel="stylesheet" href="/static/retro-pixel.css"></head>').replace('content="#f6f7f2"','content="#fffbed"');
  template=template.replace('<main class="unified-app">','<main class="unified-app pixel-frame">').replace('<span aria-hidden="true" class="brand-mark">忆</span>',`<span aria-hidden="true" class="brand-mark">${icon('logo')}</span>`);
+ if(!template.includes('<h1>小忆</h1>'))throw Error('Missing homepage brand heading');
+ template=template.replace('<h1>小忆</h1>',`<h1 class="pixel-wordmark"><span class="sr-only">I SEE YOU</span>${wordmark()}</h1>`);
  template=template.replace('>记录</button></div></header>',`>${icon('records')}<span>记录</span></button></div></header>`);
  const scene=template.match(/<label class="scene-picker">[\s\S]*?<\/label>/)?.[0];
  if(!scene)throw Error('Missing current place selector');
