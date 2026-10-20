@@ -1,25 +1,38 @@
-import {normalizeName,rememberCommand,VisualEvidenceError,MemoryPersistenceError} from './memory.mjs';
+import {normalizeName,sameType,rememberCommand,requestText,VisualEvidenceError,MemoryPersistenceError} from './memory.mjs';
 
 const clean=text=>String(text||'').trim().replace(/^(?:你好)?(?:小忆|小意|小易)[，,\s]*/,'').replace(/[。！？!?]+$/,'');
 export function visualRememberIntent(text,focus=''){
-  const value=clean(text);
+  const value=requestText(clean(text));
   if(rememberCommand(value))return null;
-  if(/^(?:请|帮我)?(?:记住|更新)(?:它|这个|那个)?(?:现在的)?位置(?:到这里)?$/.test(value)||/^(?:请|帮我)?更新到这里$/.test(value))return {name:focus};
-  const match=value.match(/^(?:请|帮我)?记住[，,：:\s]*(.{1,60}?)(?:现在)?的位置$/);
-  if(!match)return null;
+  if(/^(?:请|帮我)?(?:记住|更新)(?:它|这个|那个)?(?:现在的)?(?:具体)?位置(?:到这里)?$/.test(value)||/^(?:请|帮我)?更新到这里$/.test(value))return {name:focus};
+  const match=value.match(/^(?:请|帮我)?记住[，,：:\s]*(.{1,60}?)(?:现在)?的(?:具体)?位置$/);
+  if(!match)return /^记住/.test(value)?{name:''}:null;
   const name=normalizeName(match[1]);
-  return {name:/^(它|这个|那个|物品|东西)$/.test(name)?focus:name};
+  return {name:/^(它|他|她|这个|那个|物品|东西)$/.test(name)?focus:name};
 }
 export function searchTarget(text,focus=''){
-  const value=clean(text).replace(/^(?:请|帮我)/,'');
-  const match=value.match(/^(?:找(?:一下)?|寻找|看看)(.{1,60})$/)||value.match(/^(.{1,60}?)(?:现在)?(?:在哪里|在哪儿|在哪|放哪了)$/);
+  // A spoken request can include a second clause explaining how to look.
+  const value=requestText(clean(text)).split(/[，,；;。]/)[0]
+    .replace(/^我(?:现在)?(?:需要|想要|想)(?:要)?/,'');
+  const match=value.match(/^(?:找(?:到|一下)?|寻找|看看)(.{1,60})$/)
+    ||value.match(/^(.{1,60}?)(?:现在)?(?:具体)?(?:在哪里|在哪儿|在哪|放哪了)$/)
+    ||value.match(/^(?:现在|这次)(?:没)?(?:也|还|还是)?(?:没有|没看到|没看见|没找到)(.{1,60}?)(?:吗|呢)$/)
+    ||value.match(/^(?:现在)?(?:画面里|画面中|这里|这边)(?:有没有|能不能看到|能看到|有)(.{1,60}?)(?:吗|呢)?$/);
   if(!match)return '';
   let name=match[1].replace(/^(?:我)?(?:刚才|之前|上次|以前)(?:让你|请你|帮我)?(?:记住|记录)(?:的)?/,'').replace(/^(?:之前|上次|以前)(?:记录的)?/,'');
-  name=normalizeName(name.replace(/(?:现在)?(?:具体)?$/,''));
+  name=normalizeName(name.replace(/^[它他她](?=这个|那个)/,'').replace(/(?:的)?(?:具体)?位置$/,'').replace(/(?:现在)?(?:具体)?$/,''));
   if(/^(周围|环境|眼前|画面|这里|什么|东西)$/.test(name))return '';
-  return /^(它|这个|那个)$/.test(name)?focus:name;
+  if(focus&&/(?:这个|那个|这只|那只)/.test(match[1])&&focus.length>=name.length&&sameType(focus,name))return focus;
+  return /^(它|他|她|这个|那个)$/.test(name)?focus:name;
 }
-export const searchFollowup=text=>/^(这样(?:呢|可以吗)?|这里(?:呢|没有|也没有)|那里没有|没(?:有)?(?:看见|看到|找到)|已经对准了?|对准了?|再看(?:一)?下|再看看|继续找|然后呢|现在呢|这边呢|那边呢)$/.test(clean(text));
+export const searchFollowup=text=>{
+  const value=requestText(clean(text)).replace(/\s/g,'');
+  return /^(这样(?:呢|可以吗)?|这里(?:呢|没有|也没有)|那里没有|没(?:有)?(?:看见|看到|找到)|已经对准了?|对准了?|再看(?:一)?下|再看看|继续找|然后呢|现在呢|这边呢|那边呢)$/.test(value)
+    ||/^(?:现在|这次|画面里|画面中)(?:没)?(?:也|还|还是)?(?:没有|没看到|没看见|没找到)(?:了)?(?:吗|么|呢)?$/.test(value)
+    ||/^(?:现在|这次)?(?:看见|看到|找到)(?:了)?(?:它|他|她)?(?:了)?(?:吗|没有)$/.test(value)
+    ||/^(?:看(?:一)?下|看看)?(?:这个)?(?:画面里|画面中|镜头里)(?:有|有没有)(?:了)?(?:吗|呢)?$/.test(value)
+    ||/^(?:我)?(?:已经)?把(?:摄像头|镜头)对准(?:它|他|她|这个|那个)?(?:了)?$/.test(value);
+};
 const selection=text=>/^(?:是|要|记住)?(?:左边|右边|中间|最左边|最右边|前面|后面|靠近.{1,12}|旁边|蓝色|红色|绿色|透明)(?:的)?(?:那个|那只|那一个|杯子)?$/.test(clean(text));
 const cancelled=text=>/^(?:不用找了|别找了|停止找物|取消|不用记了|不要记了|停止观察|关闭摄像头)$/.test(clean(text));
 
@@ -56,7 +69,7 @@ export class FindDialogue{
       this.focus(target);
       const history=/(之前|上次|以前|记住|记录|放哪了)/.test(text);
       this.allowHistory=place==='home'||history;
-      if(history||(place==='home'&&!/现在|眼前|画面/.test(text)&&!/^(?:请|帮我)?(?:找|寻找|看看)/.test(clean(text)))){
+      if(history||(place==='home'&&!/现在|眼前|画面/.test(text)&&!/^(?:我(?:现在)?(?:需要|想要|想)(?:要)?)?(?:找|寻找|看看)/.test(requestText(clean(text))))){
         const records=this.memory.find(target);this.choices=records.length>1?records:[];
         if(records.length===1){this.focus(records[0].name);this.objectId=records[0].object_id||records[0].id;this.misses=1;}
         const question=records.length===1?'可以把镜头对准记录的位置吗？':records.length===0?'你最后一次使用它是在什么地方？':'';
@@ -65,7 +78,11 @@ export class FindDialogue{
       }
       return this.observation();
     }
-    if(this.target&&searchFollowup(text))return this.observation();
+    if(searchFollowup(text)){
+      if(this.target)return this.observation();
+      if(/^(?:再看(?:一)?下|再看看)$/.test(requestText(clean(text))))return null;
+      return {kind:'answer',answer:'你想让我重新确认哪件物品？请说一下物品名称。'};
+    }
     // A location clue is a conversational hint, never a write request or evidence.
     if(this.target&&/^(?:我)?(?:最后|刚才|可能|应该|好像|记得|在|放在|拿到)/.test(clean(text))){
       this.lastQuestion='可以把镜头对准你提到的位置，再说“这样呢”吗？';
@@ -74,7 +91,7 @@ export class FindDialogue{
     return null;
   }
   observation(){
-    if(!this.saving&&this.allowHistory){const records=this.memory.find(this.target);if(records.length===1){this.target=records[0].name;this.objectId=records[0].object_id||records[0].id;}}
+    if(!this.saving&&this.allowHistory){const records=this.memory.find(this.target);if(records.length===1){if(records[0].name.length>=this.target.length)this.target=records[0].name;this.objectId=records[0].object_id||records[0].id;}}
     const target=this.target,save=this.saving;
     return {kind:'observe',goal:`寻找${target}。${save?.selector?'用户选择：'+save.selector+'。':''}只描述当前可见证据。`,task:{target,allowHistory:this.allowHistory,saveToken:save?.token||null,selector:save?.selector||''}};
   }

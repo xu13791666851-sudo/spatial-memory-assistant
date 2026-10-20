@@ -763,6 +763,53 @@ test('visual remember accepts arbitrary item names and persists the requested id
   assert.equal(new Memory(data).get(name)?.name,name);assert.match(lastAnswer(events),/^已记住/);assert.ok(lastAnswer(events).includes(name));assert.equal(runtime.memory.pending,null);
  }
 });
+
+test('phone transcript saves, finds and rechecks fresh frames for spoken and typed follow-ups',async t=>{
+ for(const input of ['spoken','typed']){
+  let frame=0,result=seenCup;const bodies=[];
+  const {runtime,bridge,events,sent}=visualFixture({captureFrame:()=>`/9j/frame-${++frame}`,fetch:async(url,opts)=>{
+   if(url==='/api/vision'){bodies.push(JSON.parse(opts.body));return Response.json(result);}
+   return Response.json({configured:true,authenticated:true});
+  }});t.after(()=>bridge.close());runtime.setPlace('home');
+  const speak=text=>input==='spoken'?say(bridge,text):bridge.send(JSON.stringify({type:'text',text}));
+  speak('请帮我记住这个杯子的具体位置。');await finishPicture(bridge);
+  assert.match(lastAnswer(events),/^已记住/);assert.equal(runtime.memory.all().length,1);
+  speak('你帮我记住它的位置。');await finishPicture(bridge);
+  assert.match(lastAnswer(events),/^已记住/);assert.equal(runtime.memory.all().length,1);
+  const saved=JSON.stringify(runtime.memory.rows());
+  result={...missingCup,answer:'本次画面暂未看到白色纸杯。'};
+  speak('我现在需要找到他这个白色纸杯的位置，你帮我看一下这个画面里有没有。');await finishPicture(bridge);
+  assert.equal(bodies.at(-1).task.target,'白色纸杯');assert.match(lastAnswer(events),/上次记录/);
+  const seen={...seenCup,answer:'白色纸杯在木桌上，纸巾盒旁边。'};
+  for(const phrase of ['现在没也没有这个杯子吗？','现在也没有吗？','现在看到它了吗？','你帮我看一下这个画面里有没有。']){
+   result=seen;speak(phrase);assert.equal(bridge.visualPending,true);await finishPicture(bridge);
+   assert.match(lastAnswer(events),/当前画面中看到了符合“白色纸杯”/);
+   assert.equal(bodies.at(-1).task.target,'白色纸杯');assert.equal(bodies.at(-1).task.remember,false);
+  }
+  assert.equal(bodies.length,7);assert.equal(new Set(bodies.map(b=>b.image)).size,7);
+  assert.equal(new Set(bodies.map(b=>b.request_id)).size,7);
+  assert.ok(bodies.slice(0,2).every(b=>b.task.remember));
+  assert.equal(JSON.stringify(runtime.memory.rows()),saved);
+  assert.equal(sent.filter(e=>e.type==='response.create').length,0);
+ }
+});
+
+test('natural requests keep negation, unrelated questions and missing targets out of visual writes',async()=>{
+ const {FindDialogue,visualRememberIntent,searchTarget}=await import('../web/find-dialogue.mjs');
+ const memory=new Memory(storage()),d=new FindDialogue(memory);
+ for(const phrase of ['不要记住这个杯子的位置','我说记住这个杯子的位置','你为什么记住这个杯子的位置']){
+  assert.equal(visualRememberIntent(phrase,'杯子'),null);assert.equal(rememberCommand(phrase),null);
+ }
+ assert.match(d.intent('现在也没有吗？','home').answer,/哪件物品/);
+ assert.match(d.intent('你帮我记住它的位置。','home').answer,/物品名称/);
+ assert.equal(d.saving,null);assert.equal(memory.all().length,0);
+ assert.equal(d.intent('今天的天气怎么样','home'),null);
+ assert.equal(rememberCommand('请帮我记住钥匙放在玄关桌上。').name,'钥匙');
+ assert.ok(currentViewIntent('你帮我看一下这个画面里有没有白色纸杯'));
+ assert.equal(d.intent('再看一下','home'),null);
+ assert.deepEqual(observationCommand('小忆'),{goal:''});
+ assert.equal(searchTarget('画面里有没有白色纸杯？'),'白色纸杯');
+});
 test('inconsistent anchor wording requests clarification and retains consent for a fresh corrected frame',async t=>{
  let result={...seenCup,memory_candidate:{...candidate,anchor:'木桌',location:'桌面上，纸巾盒旁边'}};
  const {runtime,bridge,events}=visualFixture({fetch:async url=>Response.json(url==='/api/vision'?result:{configured:true,authenticated:true})});t.after(()=>bridge.close());runtime.setPlace('home');

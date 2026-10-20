@@ -6,13 +6,15 @@ const clean=(value,max=120)=>{
 };
 export const normalizeName=value=>String(value||'').trim().replace(/[，。！？!?,]+$/,'').replace(/^(?:这个|那个|这只|那只|这一个|那一个|一个|一只)(?:的)?/,'').trim();
 const canonical=value=>normalizeName(value).replace(/玻璃杯|水杯/g,'杯子').replace(/杯$/,'杯子').replace(/的/g,'');
-const sameType=(a,b)=>{
+export const sameType=(a,b)=>{
   a=canonical(a);b=canonical(b);
   return !!a&&!!b&&(a===b||a.endsWith(b)||b.endsWith(a));
 };
+// Remove only direct request prefixes, never negation or reported speech.
+export const requestText=text=>String(text||'').trim().replace(/^(?:你好)?(?:小忆|小意|小易)[，,\s]*/,'').replace(/^(?:(?:请|麻烦)(?:你)?|你(?:能不能|可以)?(?:帮我|给我)|帮我|给我|你(?=记住|更新|找|看))+/,'').trim();
 export function rememberCommand(text){
-  const value=String(text||'').trim().replace(/^(?:你好)?(?:小忆|小意|小易)[，,\s]*/,'');
-  if(/(?:现在)?的位置$/.test(value.replace(/[。！!]+$/,''))&&!/放在/.test(value))return null;
+  const value=requestText(text);
+  if(/(?:现在)?的(?:具体)?位置$/.test(value.replace(/[。！!]+$/,''))&&!/放在/.test(value))return null;
   const match=value.match(/^(?:记住|请记住|帮我记住)[，,：:\s]*(?:我)?(?:(昨天|刚刚|刚才|今天)[，,\s]*)?(?:把)?(.+?)(?:刚放在|放在|在)(.+?)[。！!]?$/);
   return match?{action:'record',name:match[2],location:match[3],event_time:match[1]||'时间未说明'}:null;
 }
