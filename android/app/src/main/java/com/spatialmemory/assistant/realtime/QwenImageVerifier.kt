@@ -16,7 +16,7 @@ import org.json.JSONObject
 class QwenImageVerifier(
     private val apiKey: String,
     private val gateway: String? = null,
-    private val http: OkHttpClient = OkHttpClient.Builder().callTimeout(10, TimeUnit.SECONDS).build(),
+    private val http: OkHttpClient = OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build(),
 ) {
     suspend fun verify(fullFrame: FramePacket, cropFrame: FramePacket?, request: CandidateVerificationRequest): QwenEvent.TargetVisible = withContext(Dispatchers.IO) {
         require(apiKey.isNotBlank() || gateway != null) { "本机构建未配置 QWEN_API_KEY" }

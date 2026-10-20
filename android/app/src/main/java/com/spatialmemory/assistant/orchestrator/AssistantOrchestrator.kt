@@ -276,7 +276,7 @@ class AssistantOrchestrator(
     private fun armVerificationTimeout(taskId: String) {
         verificationTimeoutJob?.cancel()
         verificationTimeoutJob = scope.launch(Dispatchers.Default) {
-            delay(12_000)
+            delay(18_000)
             val timedOut = withContext(Dispatchers.Main.immediate) {
                 if (!mutableState.value.qwenVerifying || taskEngine.task?.id != taskId) return@withContext false
                 taskEngine.verificationFailed(taskId)

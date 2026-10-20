@@ -18,8 +18,8 @@ export function androidGateway(fetcher=fetch){return async(request,env)=>{
    if(texts.length!==1||typeof texts[0].text!=='string'||texts[0].text.length>4000||images.length<1||images.length>2||images.some(c=>!/^data:image\/jpeg;base64,\/9j\/[A-Za-z0-9+/]+=*$/.test(c.image_url?.url||'')))return json({detail:'候选画面格式不正确。'},400);
    body={model:'qwen3.8-omni-flash',messages:[{role:'user',content}],modalities:['text'],stream:false,enable_thinking:false,max_tokens:120};endpoint='/compatible-mode/v1/chat/completions';
   }
-  const response=await fetcher(provider+endpoint,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+env.QWEN_API_KEY,...(path.endsWith('/credential')?{'x-dashscope-rtc-transport':'moq'}:{})},body:JSON.stringify(body),redirect:'manual',signal:AbortSignal.timeout(path.endsWith('/image')?9500:15000)});
-  if(!response.ok)return json({detail:'千问连接没有完成。'},502);
+  const response=await fetcher(provider+endpoint,{method:'POST',headers:{'Content-Type':'application/json','User-Agent':'okhttp/4.12.0',Authorization:'Bearer '+env.QWEN_API_KEY,...(path.endsWith('/credential')?{'x-dashscope-rtc-transport':'moq'}:{})},body:JSON.stringify(body),redirect:'manual',signal:AbortSignal.timeout(path.endsWith('/image')?12000:15000)});
+  if(!response.ok)return json({detail:'千问连接没有完成。',code:'upstream_http_'+response.status},502);
   const result=await response.json();
   if(path.endsWith('/credential')){
    if(typeof result.aoqTokenForClient!=='string'||!Array.isArray(result.clientRelayEndpoints))throw Error('credential');
@@ -27,6 +27,6 @@ export function androidGateway(fetcher=fetch){return async(request,env)=>{
   }
   const answer=result.choices?.[0]?.message?.content;if(typeof answer!=='string'||answer.length>4000)throw Error('result');
   return json({choices:[{message:{content:answer}}]});
- }catch{return json({detail:'本次千问复核未完成，本地识别会继续。'},502);}
+ }catch(error){return json({detail:'本次千问复核未完成，本地识别会继续。',code:['TimeoutError','AbortError'].includes(error?.name)?'provider_timeout':'provider_invalid_response'},502);}
 };}
 export default {fetch:androidGateway()};
