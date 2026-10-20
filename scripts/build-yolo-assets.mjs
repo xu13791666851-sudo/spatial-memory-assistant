@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 export async function buildYoloAssets(){
  await fs.mkdir('dist/static/yolo',{recursive:true});
  await fs.cp('models/yolo','dist/static/yolo',{recursive:true});
- for(const name of ['yolo-core.mjs','yolo-local.mjs','yolo-config.mjs'])await fs.copyFile('web/'+name,'dist/static/'+name);
+ for(const name of ['yolo-core.mjs','yolo-local.mjs','yolo-config.mjs','yolo-focus.mjs','target-overlay.mjs'])await fs.copyFile('web/'+name,'dist/static/'+name);
  await fs.copyFile('web/yolo-worker.js','dist/static/yolo-worker.js');
  const tf='dist/static/vendor/tfjs-4.9.0',lite='dist/static/vendor/tflite-0.0.1-alpha.10';
  await fs.mkdir(tf,{recursive:true});await fs.mkdir(lite,{recursive:true});

@@ -64,11 +64,14 @@ export function visualRememberIntent(text,focus=''){
   const target=pronoun(name)?focus:focus&&sameType(focus,name)&&focus.length>=name.length?focus:name;
   return {name:target,...(target==='所指物品'?{identify:true}:{})};
 }
+export function searchRequestText(text){
+  return requestText(clean(text)).replace(/^(?:(?:你|请|麻烦你?|帮我|给我|能不能|可不可以|再|重新|再次|开始|持续))+(?=找|寻找)/,'');
+}
 export function searchTarget(text,focus=''){
   const location=locationQuery(text,focus);
   if(location)return location.target;
   // A spoken request can include a second clause explaining how to look.
-  const value=requestText(clean(text)).split(/[，,；;。]/)[0].replace(/^(?:再次|重新|再)(?=找|寻找)/,'')
+  const value=searchRequestText(text).split(/[，,；;。]/)[0]
     .replace(/^我(?:现在)?(?:需要|想要|想)(?:要)?/,'');
   const match=value.match(/^(?:找(?:到|一下)?|寻找|看看)(.{1,60})$/)
     ||value.match(/^(.{1,60}?)(?:现在)?(?:具体)?(?:在哪里|在哪儿|在哪|放哪了)$/)
@@ -87,7 +90,8 @@ export const searchFollowup=text=>{
     ||/^(?:现在|这次|画面里|画面中)(?:没)?(?:也|还|还是)?(?:没有|没看到|没看见|没找到)(?:了)?(?:吗|么|呢)?$/.test(value)
     ||/^(?:现在|这次)?(?:看见|看到|找到)(?:了)?(?:它|他|她)?(?:了)?(?:吗|没有)$/.test(value)
     ||/^(?:看(?:一)?下|看看)?(?:这个)?(?:画面里|画面中|镜头里)(?:有|有没有)(?:了)?(?:吗|呢)?$/.test(value)
-    ||/^(?:我)?(?:已经)?把(?:摄像头|镜头)对准(?:它|他|她|这个|那个)?(?:了)?$/.test(value);
+    ||/^(?:我)?(?:已经)?把(?:摄像头|镜头)对准(?:它|他|她|这个|那个)?(?:了)?$/.test(value)
+    ||/^(?:我)?(?:都|已经|现在)?(?:把)?(?:摄像头|镜头)?(?:对准|靠近|贴近|怼到).{0,40}(?:了|呢)$/.test(value);
 };
 const selection=text=>!/(?:不要|不用|别|取消|为什么|他说|我说)/.test(clean(text))&&(/^(?:是|要|记住)?(?:左边|右边|中间|最左边|最右边|前面|后面|靠近.{1,12}|旁边)(?:的)?(?:那个|那只|那一个)?(?:.{1,20})?$/.test(clean(text))||/^(?:是|要|记住)?[^，。！？]{1,30}(?:的)?(?:那个|那只|那一个|这件|那件)$/.test(clean(text))||/^(?:是|要|记住)?[^，。！？]{1,8}色(?:的)?(?:那个|那只|那一个)$/.test(clean(text)));
 const cancelled=text=>/^(?:我找到了|找到了|不用找了|别找了|停止找物|取消|不用记了|不要记了|停止观察|关闭摄像头)$/.test(clean(text));

@@ -1,10 +1,9 @@
-import {requestText} from './memory.mjs';
 import {asksHistory} from './interaction.mjs';
-import {searchTarget} from './find-dialogue.mjs';
+import {searchTarget,searchRequestText} from './find-dialogue.mjs';
 
 export function continuousTarget(text,focus=''){
   if(asksHistory(text)||/找不到|找到了|找不着/.test(text))return '';
-  const value=requestText(text).replace(/^(?:开始|持续|再次|重新|再)(?=找|寻找)/,'');
+  const value=searchRequestText(text);
   return /^(?:找|寻找)/.test(value)?searchTarget(value,focus):'';
 }
 
@@ -40,13 +39,12 @@ export class ContinuousSearch{
   }
   connected(){if(this.running&&!this.fallback&&this.notice){this.notice='';this.publish();}}
   requested(){this.lastRequest=this.clock();}
-  accept(result,frameStatus,{stableCandidate=false}={}){
+  accept(result,frameStatus){
     const match=frameStatus==='clear'&&result.target_visible===true&&
       (!this.task.reference_appearance||result.appearance_match?.status==='match');
     this.hits=match?this.hits+1:0;
-    // Two stable local views plus this cloud-verified frame replace the second
-    // cloud round. Local detections alone can never declare a target found.
-    if(this.hits>=2||(match&&stableCandidate)){this.clearTimer(this.expiry);this.state='found';this.publish();return true;}
+    // A local category hit is never a substitute for a second fresh cloud view.
+    if(this.hits>=2){this.clearTimer(this.expiry);this.state='found';this.publish();return true;}
     this.state=match?'confirming':'searching';this.publish();this.schedule();return false;
   }
   pause(notice=''){if(!this.running)return;this.notice=notice;this.clearTimer(this.timer);this.clearTimer(this.expiry);this.hits=0;this.state='paused';this.publish();}

@@ -3,7 +3,7 @@ import {localYoloEnabled} from './yolo-config.mjs';
 
 const aborted=()=>new DOMException('Cancelled','AbortError');
 export class LocalYolo{
- constructor({Worker:WorkerClass=globalThis.Worker,origin=globalThis.location?.origin,clock=()=>performance.now(),timeoutMs=2500,loadTimeoutMs=90000,budgetMs=2500}={}){
+ constructor({Worker:WorkerClass=globalThis.Worker,origin=globalThis.location?.origin,clock=()=>performance.now(),timeoutMs=4000,loadTimeoutMs=90000,budgetMs=4000}={}){
   Object.assign(this,{WorkerClass,clock,timeoutMs,loadTimeoutMs,budgetMs});this.enabled=!!WorkerClass&&localYoloEnabled(origin);this.pending=new Map();this.serial=0;
  }
  warm(){
@@ -48,7 +48,7 @@ export class LocalYolo{
    // Slow devices keep the original cloud path; a delayed local image must
    // never be presented as a current view after the phone has moved.
    if(this.clock()-started>this.budgetMs){this.slow=true;return fallback('slow_device');}
-   return {image,stableCandidate:!!candidate,local:{status:candidate?'stable':'not_confirmed',latencyMs:this.clock()-started,inferenceMs,label:candidate?.label||null}};
+   return {image,stableCandidate:!!candidate,candidate:candidate||null,local:{status:candidate?'stable':'not_confirmed',latencyMs:this.clock()-started,inferenceMs,label:candidate?.label||null}};
   }catch(error){if(!current()||error.name==='AbortError')throw aborted();return fallback('unavailable');}
  }
  close(){if(this.closed)return;this.closed=true;this.fail();}

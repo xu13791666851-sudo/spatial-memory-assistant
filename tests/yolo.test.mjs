@@ -44,6 +44,7 @@ test('target aliases preserve unknown objects and experimental detection never e
  assert.deepEqual(targetClasses('蓝色水杯',labels,aliases),['cup']);assert.deepEqual(targetClasses('笔记本电脑',labels,aliases),['laptop']);
  for(const target of ['钥匙','紫色收纳袋','耳机','创可贴','鼠标垫'])assert.deepEqual(targetClasses(target,labels,aliases),[]);
  assert.equal(localYoloEnabled('https://i-see-you-spatial-memory.pages.dev'),false);assert.equal(localYoloEnabled('https://i-see-you-yolo-preview.pages.dev'),true);
+ assert.equal(localYoloEnabled('https://9f2c39da.i-see-you-yolo-preview.pages.dev'),true);assert.equal(localYoloEnabled('https://i-see-you-yolo-preview.pages.dev.evil.test'),false);
 });
 
 test('a local candidate alone never finishes a search or overrides a rejected appearance',()=>{
@@ -52,6 +53,7 @@ test('a local candidate alone never finishes a search or overrides a rejected ap
  assert.equal(search.accept({target_visible:false},'clear',{stableCandidate:true}),false);
  assert.equal(search.accept({target_visible:true,appearance_match:{status:'different'}},'clear',{stableCandidate:true}),false);
  assert.equal(search.accept({target_visible:true,appearance_match:{status:'match'}},'uncertain',{stableCandidate:true}),false);
+ assert.equal(search.accept({target_visible:true,appearance_match:{status:'match'}},'clear',{stableCandidate:true}),false);
  assert.equal(search.accept({target_visible:true,appearance_match:{status:'match'}},'clear',{stableCandidate:true}),true);
  assert.equal(search.state,'found');
  search.start({task:{target:'cup'}});assert.equal(search.accept({target_visible:true},'clear'),false);assert.equal(search.accept({target_visible:true},'clear'),true);
@@ -80,7 +82,7 @@ test('unavailable, unknown-category and slow detectors retain fresh cloud fallba
  assert.equal((await failed.prepare({target:'水杯',capture:()=>'/9j/fresh'})).image,'/9j/fresh');failed.close();
  let now=0,captures=0;const slow=new LocalYolo({Worker:fakeWorker(),origin:'http://localhost',clock:()=>now});await slow.warm();
  const unknown=await slow.prepare({target:'钥匙',capture:()=>'/9j/keys'});assert.equal(unknown.local.status,'unsupported_target');
- slow.call=async()=>{now+=1400;return {detections:[detection()],latencyMs:1400};};
+ slow.call=async()=>{now+=2400;return {detections:[detection()],latencyMs:2400};};
  const result=await slow.prepare({target:'水杯',capture:()=>'/9j/'+(++captures)});assert.equal(result.local.status,'slow_device');assert.equal(result.stableCandidate,false);assert.equal(result.image,'/9j/3');
  await slow.prepare({target:'水杯',capture:()=>'/9j/'+(++captures)});assert.equal(captures,4);slow.close();
 });
