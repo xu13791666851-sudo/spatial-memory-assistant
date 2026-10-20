@@ -1097,3 +1097,34 @@ test('missing current view always reads the selected history and never suggests 
  for(const text of ['白色耳机现在在哪里','这样呢']){say(f.bridge,text);await finishPicture(f.bridge);assert.match(lastAnswer(f.events),/^你上次记录白色耳机在黑色键盘右侧/);assert.match(lastAnswer(f.events),/当前画面没有看到/);assert.doesNotMatch(lastAnswer(f.events),/可能|显示器后面|抽屉/);}
  assert.equal(f.data.getItem('spatial-memory.records.v1'),before);
 });
+
+test('placement update phrases resolve the current saved object without accepting negation or reported commands',async()=>{
+ const {visualRememberIntent}=await import('../web/find-dialogue.mjs');
+ for(const text of ['重新记住它的位置','请帮我保存创可贴的最新位置','更新创可贴的位置','记住它现在的新位置','保存最新的位置','帮我记住之前保存的物品的位置','把它的位置更新到这里','我把创可贴移到别处了，帮我重新记住它的位置','记住，创可贴的位置'])assert.equal(visualRememberIntent(text,'创可贴')?.name,'创可贴',text);
+ for(const text of ['不要重新记住它的位置','不用保存最新的位置','他说，保存它的新位置','如果移动了，更新它的位置','为什么要更新它的位置'])assert.equal(visualRememberIntent(text,'创可贴'),null,text);
+ assert.equal(rememberCommand('记住它现在的新位置'),null);
+ assert.equal(visualRememberIntent('重新记住它的位置','').name,'');
+});
+
+test('find move explicitly save and find again uses one object and its newest placement in typed and voice flows',async t=>{
+ for(const input of ['typed','spoken']){
+  const clock=searchClock(),requests=[];let result={...seenCup,answer:'创可贴在木桌上，纸巾盒旁边。',appearance_match:{status:'match',unique:true,reason:'长条形包装一致'}};
+  const f=visualFixture({searchClock:clock,fetch:async(url,opts)=>{if(url==='/api/vision'){requests.push(JSON.parse(opts.body));return Response.json(result);}return Response.json({configured:true,authenticated:true});}});t.after(()=>f.bridge.close());f.runtime.setPlace('home');
+  f.runtime.memory.saveVisual('创可贴',{...candidate,appearance:'长条形包装'});const old=f.runtime.memory.get('创可贴'),before=f.data.getItem('spatial-memory.records.v1');
+  const send=text=>input==='spoken'?say(f.bridge,text):f.bridge.send(JSON.stringify({type:'text',text}));
+  send('帮我找创可贴');await clock.advance(1000);await finishPicture(f.bridge);await clock.advance(8000);await finishPicture(f.bridge);assert.equal(f.bridge.search.state,'found');assert.equal(f.data.getItem('spatial-memory.records.v1'),before);
+  send('我找到了');assert.equal(f.runtime.taskState().target,'创可贴');
+  result={...seenCup,answer:'创可贴在柜子上，药盒旁边。',objects:[{name:'柜子',position:'左侧'}],memory_candidate:{unique:true,location_supported:true,anchor:'柜子',location:'柜子上，药盒旁边',appearance:'长条形包装'}};
+  send('我把创可贴移到别处了，帮我重新记住它的位置');await finishPicture(f.bridge);
+  const latest=f.runtime.memory.get('创可贴');assert.equal(latest.location,'柜子上，药盒旁边');assert.equal(latest.object_id,old.object_id);assert.equal(f.runtime.memory.all().length,1);assert.equal(requests.at(-1).task.remember,true);assert.match(lastAnswer(f.events),/已更新这件物品的位置/);
+  send('创可贴在哪');assert.match(lastAnswer(f.events),/柜子上，药盒旁边/);assert.doesNotMatch(lastAnswer(f.events),/纸巾盒/);
+  send('帮我再次寻找这个物品');assert.equal(f.bridge.search.state,'searching');assert.equal(f.bridge.search.task.target,'创可贴');assert.match(lastAnswer(f.events),/上次记录在柜子上，药盒旁边/);assert.doesNotMatch(lastAnswer(f.events),/纸巾盒/);
+  const reload=runtimeFixture({storage:f.data}).runtime;reload.setPlace('home');const answer=await reload.api('/api/command',{text:'创可贴在哪里'});assert.match(answer.answer,/柜子上，药盒旁边/);assert.doesNotMatch(answer.answer,/纸巾盒/);
+ }
+});
+
+test('failed or cancelled fresh placement capture preserves the previous saved position',async t=>{
+ let result=missingCup;const f=visualFixture({fetch:async url=>Response.json(url==='/api/vision'?result:{configured:true,authenticated:true})});t.after(()=>f.bridge.close());f.runtime.setPlace('home');f.runtime.memory.saveVisual('创可贴',candidate);say(f.bridge,'创可贴在哪');
+ const before=f.data.getItem('spatial-memory.records.v1');say(f.bridge,'重新记住它的位置');await finishPicture(f.bridge);assert.match(lastAnswer(f.events),/还没有保存/);assert.equal(f.data.getItem('spatial-memory.records.v1'),before);
+ say(f.bridge,'取消');say(f.bridge,'创可贴在哪');say(f.bridge,'更新它的位置');say(f.bridge,'取消');assert.equal(f.bridge.scene.config,null);assert.equal(f.data.getItem('spatial-memory.records.v1'),before);
+});

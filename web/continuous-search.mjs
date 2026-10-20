@@ -4,7 +4,7 @@ import {searchTarget} from './find-dialogue.mjs';
 
 export function continuousTarget(text,focus=''){
   if(asksHistory(text)||/找不到|找到了|找不着/.test(text))return '';
-  const value=requestText(text).replace(/^(?:开始|持续)(?=找|寻找)/,'');
+  const value=requestText(text).replace(/^(?:开始|持续|再次|重新|再)(?=找|寻找)/,'');
   return /^(?:找|寻找)/.test(value)?searchTarget(value,focus):'';
 }
 

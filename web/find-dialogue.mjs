@@ -36,19 +36,32 @@ export function locationQuery(text,focus=''){
   return implicit;
 }
 export function visualRememberIntent(text,focus=''){
-  const value=requestText(clean(text));
+  let value=requestText(clean(text));
   if(rememberCommand(value))return null;
-  if(/^(?:请|帮我)?(?:记住|更新)(?:它|这个|那个)?(?:现在的)?(?:具体)?位置(?:到这里)?$/.test(value)||/^(?:请|帮我)?更新到这里$/.test(value))return {name:focus};
-  const match=value.match(/^(?:请|帮我)?记住[，,：:\s]*(.{1,60}?)(?:现在)?的(?:具体)?位置$/);
+  value=value.replace(/^((?:重新|再次|再)?(?:记住|更新|保存|记录))[，,]\s*/,'$1');
+  const clauses=value.split(/[，,；;。]/).map(s=>s.trim()).filter(Boolean);
+  if(clauses.length>1){
+    // Only a direct placement preamble can precede the save request.
+    const moved=clauses[0].match(/^(?:我)?(?:已经|刚刚|刚才|现在)?(?:把|将)(.{1,60}?)(?:移动|移到|挪|放到|放在|换)/);
+    if(clauses.length!==2||!moved)return null;
+    const named=normalizeName(moved[1]);
+    if(!pronoun(named))focus=named;
+    value=requestText(clauses[1]);
+  }
+  if(rememberCommand(value))return null;
+  value=value.replace(/^(?:重新|再次|再)(?=记住|更新|保存|记录)/,'');
+  if(/^更新到这里$/.test(value))return {name:focus};
+  const match=value.match(/^(?:记住|更新|保存|记录)(?:一下)?[：:\s]*(.{0,60}?)(?:的)?(?:具体)?位置(?:到这里)?$/)
+    ||value.match(/^把(.{1,60}?)(?:的)?位置更新到这里$/);
   if(!match)return /^记住/.test(value)?{name:''}:null;
-  const name=normalizeName(match[1]);
-  return {name:/^(它|他|她|这个|那个|物品|东西)$/.test(name)?focus:name};
+  const name=normalizeName(match[1].replace(/^(?:之前|上次|刚才)(?:保存|记住|记录)的/,'').replace(/(?:(?:现在|当前|最新|新|移动后|移动之后)(?:的)?|的)+$/,''));
+  return {name:pronoun(name)?focus:focus&&sameType(focus,name)&&focus.length>=name.length?focus:name};
 }
 export function searchTarget(text,focus=''){
   const location=locationQuery(text,focus);
   if(location)return location.target;
   // A spoken request can include a second clause explaining how to look.
-  const value=requestText(clean(text)).split(/[，,；;。]/)[0]
+  const value=requestText(clean(text)).split(/[，,；;。]/)[0].replace(/^(?:再次|重新|再)(?=找|寻找)/,'')
     .replace(/^我(?:现在)?(?:需要|想要|想)(?:要)?/,'');
   const match=value.match(/^(?:找(?:到|一下)?|寻找|看看)(.{1,60})$/)
     ||value.match(/^(.{1,60}?)(?:现在)?(?:具体)?(?:在哪里|在哪儿|在哪|放哪了)$/)
@@ -59,7 +72,7 @@ export function searchTarget(text,focus=''){
   name=normalizeName(name.replace(/^[它他她](?=这个|那个)/,'').replace(/(?:的)?(?:具体)?位置$/,'').replace(/(?:现在)?(?:具体)?$/,''));
   if(/^(周围|环境|眼前|画面|这里|什么|东西)$/.test(name))return '';
   if(focus&&/(?:这个|那个|这只|那只)/.test(match[1])&&focus.length>=name.length&&sameType(focus,name))return focus;
-  return /^(它|他|她|这个|那个)$/.test(name)?focus:name;
+  return pronoun(name)?focus:name;
 }
 export const searchFollowup=text=>{
   const value=requestText(clean(text)).replace(/\s/g,'');
@@ -81,7 +94,11 @@ export class FindDialogue{
   summary(){return {target:this.target||null,object_id:this.objectId,missing_observations:this.misses,last_question:this.lastQuestion||null,awaiting_save_clarification:!!this.saving};}
   intent(text,place){
     if(this.saving&&this.saving.expires<=this.clock())this.saving=null;
-    if(cancelled(text)){this.reset();return {kind:'cancel',answer:'好的，已停止这次寻找或记录。'};}
+    if(cancelled(text)){
+      if(/^(?:我)?找到了$/.test(clean(text))){this.saving=null;this.choices=[];this.misses=0;}
+      else this.reset();
+      return {kind:'cancel',answer:'好的，已停止这次寻找或记录。'};
+    }
     const save=visualRememberIntent(text,this.target);
     if(save){
       this.saving=null;

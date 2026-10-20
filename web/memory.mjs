@@ -20,7 +20,7 @@ export const sameType=(a,b)=>{
 export const requestText=text=>String(text||'').trim().replace(/^(?:你好)?(?:小忆|小意|小易)[，,\s]*/,'').replace(/^(?:(?:请|麻烦)(?:你)?|你(?:能不能|可以)?(?:帮我|给我)|帮我|给我|你(?=记住|更新|找|看))+/,'').trim();
 export function rememberCommand(text){
   const value=requestText(text);
-  if(/(?:现在)?的(?:具体)?位置$/.test(value.replace(/[。！!]+$/,''))&&!/放在/.test(value))return null;
+  if(/(?:现在|当前)?的(?:具体|最新|新)?位置$|(?:现在|当前|最新|新)位置$/.test(value.replace(/[。！!]+$/,''))&&!/放在/.test(value))return null;
   const match=value.match(/^(?:记住|请记住|帮我记住)[，,：:\s]*(?:我)?(?:(昨天|刚刚|刚才|今天)[，,\s]*)?(?:把)?(.+?)(?:刚放在|放在|在)(.+?)[。！!]?$/);
   return match?{action:'record',name:match[2],location:match[3],event_time:match[1]||'时间未说明'}:null;
 }
@@ -102,7 +102,7 @@ export class Memory {
       if(!this.rows().some(r=>r.id===record.id&&r.name===name&&r.location===location&&r.appearance===appearance))throw Error('write not retained');
     }catch{throw new MemoryPersistenceError('浏览器没有成功保存物品记忆。');}
     this.last=name;this.pending=null;
-    return {...this.result(`已记住：${name}在${location}。${observedAppearance?'外观也已保存：'+observedAppearance+'。':appearance?'这次外观未看清，保留原来的外观记录。':'这次只记下位置，外观还没看清；可以把物品拍近一些，再让我记住。'}`),saved:true,record};
+    return {...this.result(`已记住：${name}在${location}。${old?'已更新这件物品的位置，下次查询会使用这次保存的位置。':''}${observedAppearance?'外观也已保存：'+observedAppearance+'。':appearance?'这次外观未看清，保留原来的外观记录。':'这次只记下位置，外观还没看清；可以把物品拍近一些，再让我记住。'}`),saved:true,record};
   }
   remember(text){
     const command=rememberCommand(text);if(!command)return null;

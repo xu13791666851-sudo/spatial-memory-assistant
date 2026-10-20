@@ -24,7 +24,9 @@ await page.route('**/*',async route=>{
  if(u.pathname==='/api/realtime/sdp')return route.fulfill({body:'v=0\r\n'});
  if(u.pathname==='/api/vision'){
   const request=route.request().postDataJSON();vision++;images.push(request.image);inflight++;maxInflight=Math.max(maxInflight,inflight);
-  assert.equal(request.task.target,'绿色水杯');assert.equal(request.task.remember,false);assert.equal(request.task.reference_appearance,'绿色杯身，有白色杯盖');
+  assert.equal(request.task.target,'绿色水杯');
+  if(request.task.remember){inflight--;return route.fulfill({json:{request_id:request.request_id,frame_received:true,frame_status:'clear',answer:'绿色水杯在柜子上，药盒旁边。',objects:[{name:'柜子',position:'左侧'}],target_visible:true,memory_candidate:{unique:true,location_supported:true,anchor:'柜子',location:'柜子上，药盒旁边',appearance:'绿色杯身，有白色杯盖'}}});}
+  assert.equal(request.task.remember,false);assert.equal(request.task.reference_appearance,'绿色杯身，有白色杯盖');
   await new Promise(resolve=>setTimeout(resolve,300));inflight--;
   return route.fulfill({json:{request_id:request.request_id,frame_received:true,frame_status:'clear',answer:vision===1?'画面中没有看到绿色水杯。':'绿色水杯在木桌上，电脑左侧。',objects:[{name:'木桌',position:'画面下方'}],target_visible:vision>1,appearance_match:vision>1?{status:'match',unique:true,reason:'绿色杯身和白色杯盖与记录一致'}:null}});
  }
@@ -45,12 +47,22 @@ assert.equal(vision,2);assert.match(await page.locator('#search-status').innerTe
 await page.waitForFunction(()=>window.searchTest.runtime.taskState().search.state==='found',{},{timeout:20000});
 assert.equal(vision,3);assert.equal(maxInflight,1);assert.equal(new Set(images).size,3);assert.match(await page.locator('#latest-answer').innerText(),/找到了绿色水杯/);assert.equal(await page.locator('#search-controls').isVisible(),false);
 assert.equal(await page.evaluate(()=>localStorage.getItem('spatial-memory.records.v1')),before);
-await page.evaluate(()=>window.searchTest.sendText('帮我找绿色水杯'));await page.getByRole('button',{name:'暂停寻找',exact:true}).click();
-assert.equal(await page.evaluate(()=>window.searchTest.runtime.taskState().search.state),'paused');assert.equal(vision,3);
+const originalId=await page.evaluate(()=>window.searchTest.runtime.memory.get('绿色水杯').object_id);
+await page.evaluate(()=>window.searchTest.sendText('我找到了'));
+await page.evaluate(()=>window.searchTest.sendText('我把它移到别处了，帮我重新记住它的位置'));
+await page.waitForFunction(()=>window.searchTest.runtime.memory.get('绿色水杯').location==='柜子上，药盒旁边');
+assert.equal(vision,4);assert.equal(await page.evaluate(()=>window.searchTest.runtime.memory.all().length),1);
+assert.equal(await page.evaluate(()=>window.searchTest.runtime.memory.get('绿色水杯').object_id),originalId);
+assert.match(await page.locator('#latest-answer').innerText(),/已更新这件物品的位置/);
+await page.evaluate(()=>window.searchTest.sendText('帮我再次寻找这个物品'));assert.match(await page.locator('#latest-answer').innerText(),/上次记录在柜子上，药盒旁边/);await page.getByRole('button',{name:'暂停寻找',exact:true}).click();
+assert.equal(await page.evaluate(()=>window.searchTest.runtime.taskState().search.state),'paused');assert.equal(vision,4);
 await page.getByRole('button',{name:'继续寻找',exact:true}).click();assert.equal(await page.evaluate(()=>window.searchTest.runtime.taskState().search.state),'searching');
 for(const size of [{width:320,height:568},{width:390,height:844}]){await page.setViewportSize(size);const b=await page.locator('#search-cancel').boundingBox();assert.ok(b.x>=0&&b.y>=0&&b.x+b.width<=size.width&&b.y+b.height<=size.height,JSON.stringify(b));}
 await page.getByRole('button',{name:'取消寻找',exact:true}).click();assert.equal(await page.evaluate(()=>window.searchTest.runtime.taskState().search.state),'idle');assert.equal(await page.locator('#search-controls').isVisible(),false);
 assert.equal(await page.evaluate(()=>window.searchTest.bridge().videoTrack.readyState==='live'),true);
-await page.click('#end-conversation');assert.deepEqual(errors,[]);
-console.log('PASS: generated mobile page, one find command, fresh missing/seen/confirmed frames, single flight, one found result, unchanged memory, pause/resume/cancel controls');
+await page.click('#end-conversation');
+await page.reload();await page.waitForFunction(()=>window.searchTest);await page.selectOption('#place-mode','home');
+await page.evaluate(()=>window.searchTest.sendText('绿色水杯在哪里'));
+assert.match(await page.locator('#chat .chat-turn').last().innerText(),/柜子上，药盒旁边/);assert.equal(vision,4);assert.deepEqual(errors,[]);
+console.log('PASS: generated mobile page, one find command, fresh missing/seen/confirmed frames, single flight, one found result, explicit movement updates the same item, repeat search and reload recall the latest location, pause/resume/cancel controls');
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
