@@ -30,3 +30,9 @@ test('preview document middleware updates only the stream connection directive a
   assert.equal(await preview.text(),'<html>test</html>');assert.equal(preview.headers.get('Cache-Control'),'no-store');
   const production=await handle(new Request('https://spatial-memory-xuziyi.netlify.app/video/'),{next});assert.equal(production.headers.get('Content-Security-Policy'),csp);
 });
+
+test('only the authorized preview uses the isolated stream gateway; production starts with HTTP observation',async()=>{
+ const {visionStreamUrlFor,PREVIEW_VISION_STREAM_URL}=await import('../web/vision-stream-config.mjs');
+ assert.equal(visionStreamUrlFor('https://deploy-preview-8--spatial-memory-xuziyi.netlify.app'),PREVIEW_VISION_STREAM_URL);
+ for(const origin of ['https://i-see-you-spatial-memory.pages.dev','https://spatial-memory-xuziyi.netlify.app','https://i-see-you-spatial-memory.xu13791666851.workers.dev','https://deploy-preview-8--spatial-memory-xuziyi.netlify.app.evil.test',undefined])assert.equal(visionStreamUrlFor(origin),'');
+});

@@ -1,4 +1,4 @@
-import {VISION_STREAM_URL} from '../../web/vision-stream-config.mjs';
+import {PREVIEW_VISION_STREAM_URL as VISION_STREAM_URL} from '../../web/vision-stream-config.mjs';
 
 // Keep the document's connection policy tied to this preview's transport even
 // when the site has inherited global static-header rules from another deploy.
