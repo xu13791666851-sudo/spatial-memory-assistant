@@ -1,0 +1,24 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "report_target_visibility",
+      "description": "确认本次候选是否为当前找物任务的目标，并返回画面位置和参照物",
+      "parameters": {
+        "type": "object",
+        "required": ["taskId", "candidateId", "frameId", "visible", "sameObject", "confidence"],
+        "properties": {
+          "taskId": {"type": "string"},
+          "candidateId": {"type": "string"},
+          "frameId": {"type": "integer"},
+          "visible": {"type": "boolean"},
+          "sameObject": {"type": "boolean"},
+          "direction": {"type": "string"},
+          "anchor": {"type": "string"},
+          "state": {"type": "string"},
+          "confidence": {"type": "number"}
+        }
+      }
+    }
+  }
+]

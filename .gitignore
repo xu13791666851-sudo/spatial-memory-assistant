@@ -27,3 +27,13 @@
 .dev.vars
 .dev.vars.*
 
+
+# Android build output and private machine configuration
+/android/.gradle/
+/android/**/build/
+/android/local.properties
+/android/app/src/main/assets/site/
+/android/app/src/main/assets/exp.tflite
+*.apk
+*.jks
+*.keystore
