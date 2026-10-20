@@ -257,14 +257,15 @@ export function createRuntime(env){
         if(stream)await stream.open(scene.controller.signal);
         if(this.closed||this.sceneCommit!==scene||this.paused)return;
         if(stream)this.search.connected();
-        let image;
+        let image,capturedAt;
+        const capture=()=>{const image=this.captureScene();capturedAt=new Date().toISOString();return image;};
         if(scene.task?.scanId&&this.localYolo.enabled){
-          const local=await this.localYolo.prepare({target:scene.task.target,capture:()=>this.captureScene(),signal:scene.controller.signal,
+          const local=await this.localYolo.prepare({target:scene.task.target,capture,signal:scene.controller.signal,
             stillCurrent:()=>!this.closed&&!this.paused&&!document.hidden&&this.sceneCommit===scene&&this.videoId===scene.id&&this.mediaGeneration===scene.generation});
           image=local.image;scene.stableCandidate=local.stableCandidate===true;this.lastLocalPerception=local.local;
-        }else image=this.captureScene();
+        }else image=capture();
         if(this.closed||this.paused||this.sceneCommit!==scene||this.videoId!==scene.id||this.mediaGeneration!==scene.generation)return;
-        scene.observedAt=new Date().toISOString();this.search.requested();
+        scene.observedAt=capturedAt||new Date().toISOString();this.search.requested();
         const deviceSpeech=!!document.getElementById('fast-describe')?.checked&&(env.supportsSpeech||document.getElementById('screen-reader-mode')?.checked);
         const requestId=crypto.randomUUID(),task=scene.task?{target:scene.task.target,remember:!!scene.task.saveToken,reference_appearance:scene.task.reference_appearance||'',...(scene.task.identify?{identify:true}:{})}:null;
         this.visualPending=true;this.suppressResponse=true;this.stopPlayback();
