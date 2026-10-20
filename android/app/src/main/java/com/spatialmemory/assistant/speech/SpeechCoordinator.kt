@@ -23,6 +23,8 @@ class SpeechCoordinator(
 ) : Closeable {
     private val handler = Handler(Looper.getMainLooper())
     private val deduplicator = SpeechDeduplicator()
+    private var enabled = true
+    fun setEnabled(value: Boolean) { enabled = value; if (!value) handler.post { waiting.clear(); tts.stop(); microphoneEnabled(true) } }
     private var ready = false
     private var closed = false
     private val waiting = ArrayDeque<SpeechEvent>()
@@ -46,7 +48,7 @@ class SpeechCoordinator(
     }
 
     fun announce(event: SpeechEvent) {
-        if (!deduplicator.accept(event) || closed) return
+        if (!enabled || !deduplicator.accept(event) || closed) return
         handler.post {
             if (!ready) waiting.addLast(event) else speak(event)
         }

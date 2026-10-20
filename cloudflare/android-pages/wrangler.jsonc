@@ -1,7 +1,11 @@
 {
   "name": "i-see-you-android-core-test",
-  "account_id": "e72be7d2513d32ec4fd7b10faecb596d",
   "pages_build_output_dir": "../../.android-pages",
   "compatibility_date": "2026-10-20",
-  "services":[{"binding":"ANDROID_API","service":"i-see-you-android-core-test"}]
+  "services": [
+    {
+      "binding": "ANDROID_API",
+      "service": "i-see-you-android-core-test"
+    }
+  ]
 }

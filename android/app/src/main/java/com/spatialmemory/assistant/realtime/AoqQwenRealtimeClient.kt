@@ -25,6 +25,8 @@ class AoqQwenRealtimeClient(
     private val credentialProvider: suspend () -> AoqCredential,
     private val imageVerifier: QwenImageVerifier,
 ) : QwenRealtimeClient {
+    private var playbackEnabled = true
+    fun setPlaybackEnabled(enabled: Boolean) { playbackEnabled = enabled; engine?.let { if (enabled) it.startAudioPlayer(AoqClientEngine.AoqAudioPlaybackConfig()) else it.stopAudioPlayer() } }
     private val mutableState = MutableStateFlow(RealtimeState.DISCONNECTED)
     private val mutableEvents = MutableSharedFlow<QwenEvent>(extraBufferCapacity = 16)
     override val state = mutableState.asStateFlow()
@@ -74,7 +76,7 @@ class AoqQwenRealtimeClient(
             width = 640; height = 480; fps = 2; isExternal = true
         }).requireOk("配置外部 JPEG")
         created.startAudioCapture(AoqClientEngine.AoqAudioCaptureConfig()).requireOk("启动麦克风")
-        created.startAudioPlayer(AoqClientEngine.AoqAudioPlaybackConfig()).requireOk("启动扬声器")
+        if (playbackEnabled) created.startAudioPlayer(AoqClientEngine.AoqAudioPlaybackConfig()).requireOk("启动扬声器")
         created.enableSendMediaStream(AoqClientEngine.AoqTrackType.AoqTrackTypeAudio, false)
         created.enableSendMediaStream(AoqClientEngine.AoqTrackType.AoqTrackTypeVideo, false)
         created.connect(credential.toConnectConfig()).requireOk("连接千问")

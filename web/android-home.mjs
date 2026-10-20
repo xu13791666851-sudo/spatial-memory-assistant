@@ -14,7 +14,7 @@ function call(method,params={}){
 }
 if(bridge)bridge.onmessage=e=>{let message;try{message=JSON.parse(e.data);}catch{return;}const request=pending.get(message.id);if(!request)return;pending.delete(message.id);clearTimeout(request.timer);message.error?request.reject(Error(message.error)):request.resolve(message.result);};
 function notice(text){$('notice').textContent=text;$('notice').hidden=false;setTimeout(()=>$('notice').hidden=true,5000);}
-function answer(text,meta={}){if(!text||text===lastAnswer)return;lastAnswer=text;$('latest-answer').textContent=text;conversation.add(text,false,meta);}
+function answer(text,meta={}){if(!text||text===lastAnswer)return;lastAnswer=text;$('latest-answer').textContent=text;if($('screen-reader-mode').checked)$('answer-live').textContent=text;conversation.add(text,false,meta);}
 const runtime={
  memory:{all:()=>items,answer:name=>{const r=items.find(x=>x.name===name);return r?`${r.name}上次记录：${r.location}。`:'没有读到这条记录。';}},
  targetOverlayState:()=>null,
@@ -42,12 +42,12 @@ async function send(text){
 }
 function clearFrame(){frame=null;clearTimeout(frameTimer);photo.hidden=true;box.hidden=true;$('camera-empty').hidden=false;}
 function sync(){
- $('main-toggle').textContent=paused?'▶ 继续':native.running?'Ⅱ 暂停':'▶ 开始';$('stop').disabled=!native.running&&!paused;$('replay').disabled=!lastAnswer;
+ $('main-toggle').textContent=paused?'▶ 继续':native.running?'Ⅱ 暂停':'▶ 开始';$('end-conversation').disabled=!native.running&&!paused;$('replay').disabled=!lastAnswer;
  $('voice-state').textContent=paused?'已暂停':native.running?(connection==='CONNECTED'?'本机 YOLO · 千问已连接':'本机 YOLO · 千问连接中'):'手机摄像头 · 尚未开始';
- $('connection').textContent=native.error||native.message||'安卓本机识别已就绪';$('place-select').value=place;
+ $('connection').textContent=native.error||native.message||'安卓本机识别已就绪';$('place-mode').value=place;
  if(!native.running||paused)clearFrame();home.syncState();
 }
-const preview=$('camera-preview'),photo=document.createElement('img');photo.id='native-preview';photo.alt='手机或硬件的当前摄像头画面';photo.hidden=true;preview.append(photo);
+const preview=$('camera-preview'),photo=document.createElement('img');photo.id='native-preview';photo.alt='手机或硬件的当前摄像头画面';photo.hidden=true;preview.hidden=false;preview.append(photo);
 const box=document.createElement('div');box.className='memory-target-overlay';box.hidden=true;box.setAttribute('aria-hidden','true');const label=document.createElement('span');label.className='memory-target-label';box.append(label);preview.append(box);
 let aliases={},labels=[];
 function drawBox(){
@@ -74,15 +74,22 @@ window.nativeEvent=({type,data})=>{
  }
 };
 photo.onload=drawBox;new ResizeObserver(drawBox).observe(preview);
-$('main-toggle').onclick=()=>perform(native.running?'pause':paused?'resume':'start');$('start').onclick=$('video-start').onclick=$('camera-start-target').onclick=()=>perform('start');$('stop').onclick=()=>perform('stop');$('pause').onclick=()=>perform(paused?'resume':'pause');
+$('main-toggle').onclick=()=>perform(native.running?'pause':paused?'resume':'start');$('camera-start-target').onclick=$('video-again').onclick=$('camera-open').onclick=()=>perform('start');$('camera-send').onclick=()=>send('帮我看看眼前有什么');$('camera-close').onclick=$('video-stop').onclick=()=>perform('stop');$('end-conversation').onclick=()=>perform('stop');$('pause').onclick=()=>perform(paused?'resume':'pause');
 $('replay').onclick=()=>call('replay',{text:lastAnswer}).catch(e=>notice(e.message));$('settings-close').onclick=()=>$('settings-dialog').close();
-$('place-select').onchange=()=>{place=$('place-select').value;localStorage.setItem('native-place',place);};
+$('place-mode').onchange=()=>{place=$('place-mode').value;localStorage.setItem('native-place',place);};
 $('answer-size').onchange=()=>{document.documentElement.style.setProperty('--answer-size',$('answer-size').value+'px');localStorage.setItem('native-answer-size',$('answer-size').value);};
 document.documentElement.style.setProperty('--answer-size',(localStorage.getItem('native-answer-size')||'18')+'px');
+
+$('screen-reader-mode').checked=localStorage.getItem('native-reader')==='true';
+$('read-aloud').checked=localStorage.getItem('native-read-local')!=='false';
+$('fast-describe').checked=true;$('fast-describe').disabled=true;
+$('fast-describe').closest('label').lastChild.textContent='找物提示使用手机声音（安卓核心）';
+const audioSettings=()=>{localStorage.setItem('native-reader',String($('screen-reader-mode').checked));localStorage.setItem('native-read-local',String($('read-aloud').checked));return call('audioSettings',{reader:$('screen-reader-mode').checked,readLocal:$('read-aloud').checked}).catch(e=>notice(e.message));};
+$('screen-reader-mode').onchange=$('read-aloud').onchange=audioSettings;
 $('settings-form').onsubmit=async e=>{e.preventDefault();try{const s=await call('status');$('config-state').textContent=`安卓本机 YOLO 已就绪，支持 ${s.labels} 类；千问状态：${s.connection}。`;}catch(e){$('config-state').textContent=e.message;}};
 $('search-cancel').onclick=()=>call('cancel');$('search-pause').onclick=()=>perform(paused?'resume':'pause');
 installTextComposer({document,window,send,state:()=>({paused})});
-window.nativeBack=()=>{for(const id of ['text-composer','memory-delete-dialog','memory-editor','records-dialog','settings-dialog']){if($(id).open){$(id).close();return;}}if(native.running)perform('stop');else notice('请使用系统主页键退出。');};
+window.nativeBack=()=>{for(const id of ['text-composer','memory-delete-dialog','memory-editor','records-dialog','settings-dialog']){if($(id).open){$(id).close();return true;}}if(native.running){perform('stop');return true;}return false;};
 document.addEventListener('visibilitychange',()=>{if(document.hidden)clearFrame();});
 
 // Hardware controls live inside the existing settings entrance; the homepage is unchanged.
@@ -90,6 +97,6 @@ $('native-scan').onclick=async()=>{try{$('native-hardware-status').textContent='
 $('native-provision').onclick=async()=>{try{await call('provision',{deviceId:$('native-devices').value,ssid:$('native-ssid').value,password:$('native-password').value});$('native-password').value='';$('native-hardware-status').textContent='硬件配网完成。';}catch(e){$('native-hardware-status').textContent=e.message;}};
 $('native-connect').onclick=async()=>{try{await call('hardware',{baseUrl:$('native-device-url').value,streamUrl:$('native-stream-url').value,token:$('native-device-token').value,legacy:$('native-legacy').checked});$('native-device-token').value='';$('native-hardware-status').textContent='硬件已连接。';}catch(e){$('native-hardware-status').textContent=e.message;}};
 $('native-source').onchange=async()=>{try{await call('source',{source:$('native-source').value});notice('视频来源已切换，点击开始即可使用。');}catch(e){notice(e.message);}};
-try{const ready=await call('ready');native=ready.state;items=ready.memories;const assets=await import('./native-labels.mjs');labels=assets.labels;aliases=assets.aliases;sync();$('config-state').textContent='安卓本机识别已就绪，点击开始即可使用。';}catch(e){notice(e.message);}
+try{const ready=await call('ready');native=ready.state;items=ready.memories;const assets=await import('./native-labels.mjs');labels=assets.labels;aliases=assets.aliases;sync();drawBox();$('config-state').textContent='安卓本机识别已就绪，点击开始即可使用。';}catch(e){notice(e.message);}
 // Exposed for the packaged-UI contract test; never substitutes for the native core.
 export {call,runtime,home};

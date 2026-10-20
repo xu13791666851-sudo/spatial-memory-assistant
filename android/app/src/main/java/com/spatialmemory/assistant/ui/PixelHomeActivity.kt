@@ -50,6 +50,7 @@ class PixelHomeActivity : ComponentActivity() {
     private lateinit var records: NativeRecords
     private lateinit var provisioner: Esp32Provisioner
     private var pageReady = false
+    private var sessionSerial = 0
     private var paused = false
     private var pausedTarget: String? = null
     private var pausedLearning = false
@@ -74,6 +75,8 @@ class PixelHomeActivity : ComponentActivity() {
         val credential = GatewayCredentialClient(BuildConfig.GATEWAY_URL)
         qwen = AoqQwenRealtimeClient(this, credential::get, QwenImageVerifier("", gateway = BuildConfig.GATEWAY_URL))
         speech = SpeechCoordinator(this) { enabled -> qwen.setMicrophoneEnabled(enabled && !paused && lastState.running) }
+        qwen.setPlaybackEnabled(!prefs.getBoolean("reader", false))
+        speech.setEnabled(!prefs.getBoolean("reader", false) && prefs.getBoolean("readLocal", true))
         controller = AssistantController(AssistantOrchestrator(detector, TargetMatcher(this), PerceptionEngine(TargetMatcher(this), HistogramObjectEmbedder()), repository, qwen, speech, File(cacheDir, "active-search-candidate")))
         provisioner = Esp32Provisioner(this)
         prefs.getString("esp32", null)?.let { runCatching { JSONObject(it) }.getOrNull()?.let { value ->
@@ -110,7 +113,7 @@ class PixelHomeActivity : ComponentActivity() {
         }
         setContentView(web)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() { web.evaluateJavascript("window.nativeBack?.()", null) }
+            override fun handleOnBackPressed() { web.evaluateJavascript("window.nativeBack?.()") { handled -> if (handled != "true") finish() } }
         })
         lifecycleScope.launch {
             controller.state.collect { state ->
@@ -124,12 +127,13 @@ class PixelHomeActivity : ComponentActivity() {
             }
         }
         lifecycleScope.launch { qwen.state.collect { event("connection", JSONObject().put("state", it.name)) } }
-        lifecycleScope.launch { qwen.events.collect { e -> if (e is QwenEvent.Transcript) event("transcript", JSONObject().put("role", e.role).put("text", e.text)) } }
+        lifecycleScope.launch { qwen.events.collect { e -> if (e is QwenEvent.Transcript) { event("transcript", JSONObject().put("role", e.role).put("text", e.text)); if (e.role == "user" && Regex("^(关闭摄像头|结束对话|停止观察)[。！!？?]*$").matches(e.text.trim())) lifecycleScope.launch { sessionSerial++; controller.stop() } } } }
         lifecycleScope.launch {
             controller.analyzedFrames.collectLatest { analyzed ->
                 if (!pageReady || paused || !lastState.running) return@collectLatest
+                val serial = sessionSerial
                 val frame = withContext(Dispatchers.Default) { frameJson(analyzed) }
-                if (lastState.running && !paused) event("frame", frame)
+                if (serial == sessionSerial && lastState.running && !paused) event("frame", frame)
             }
         }
         web.loadUrl("https://appassets.androidplatform.net/index.html")
@@ -146,6 +150,7 @@ class PixelHomeActivity : ComponentActivity() {
         permission.launch(needed.toTypedArray()); return result.await()
     }
     private suspend fun start() {
+        sessionSerial++
         check(requirePermissions())
         paused = false
         controller.start(if (sourceKind == "esp32") Esp32CameraSource(Esp32Api(checkNotNull(esp32) { "请先连接硬件" })) else PhoneCameraSource(this, this))
@@ -153,8 +158,8 @@ class PixelHomeActivity : ComponentActivity() {
     private suspend fun command(method: String, p: JSONObject): Any = when (method) {
         "ready" -> { pageReady = true; JSONObject().put("state", stateJson(lastState)).put("memories", records.all()).put("source", sourceKind) }
         "start" -> { start(); true }
-        "stop" -> { pausedTarget = null; paused = false; controller.stop(); true }
-        "pause" -> { pausedTarget = lastState.target; pausedLearning = lastState.searchState == SearchState.LEARNING; paused = true; controller.stop(); true }
+        "stop" -> { sessionSerial++; pausedTarget = null; paused = false; controller.stop(); true }
+        "pause" -> { sessionSerial++; pausedTarget = lastState.target; pausedLearning = lastState.searchState == SearchState.LEARNING; paused = true; controller.stop(); true }
         "resume" -> { val target = pausedTarget; start(); if (target != null) { if (pausedLearning) controller.remember(target) else controller.search(target) }; true }
         "text" -> { check(lastState.running && !paused); controller.submitText(p.getString("text").take(2000)); true }
         "search" -> { if (!lastState.running) start(); controller.search(p.getString("target").take(60)); true }
@@ -165,7 +170,7 @@ class PixelHomeActivity : ComponentActivity() {
         "memories" -> records.all()
         "editMemory" -> { records.edit(p); JSONObject().put("items", records.all()).put("answer", "已保存修改。") }
         "deleteMemory" -> { records.delete(p); JSONObject().put("items", records.all()).put("answer", "已删除这条记忆。") }
-        "source" -> { controller.stop(); sourceKind = if (p.optString("source") == "esp32") "esp32" else "phone"; true }
+        "source" -> { sessionSerial++; controller.stop(); sourceKind = if (p.optString("source") == "esp32") "esp32" else "phone"; true }
         "scan" -> { check(requirePermissions(true)); JSONArray().apply { provisioner.scan().forEach { put(JSONObject().put("id", it.id).put("name", it.name).put("signal", it.signal)) } } }
         "provision" -> {
             check(requirePermissions(true)); val result = provisioner.provision(p.getString("deviceId"), p.getString("ssid"), p.getString("password").toCharArray())
@@ -176,6 +181,7 @@ class PixelHomeActivity : ComponentActivity() {
             val stream = p.optString("streamUrl").ifBlank { "$base/stream" }; check(stream.startsWith(base + "/") || stream.startsWith(base + ":81/"))
             esp32 = Esp32Connection(base, stream, token = p.optString("token"), legacyCameraWebServer = p.optBoolean("legacy")); Esp32Api(esp32!!).refresh(); saveEsp32(); true
         }
+        "audioSettings" -> { val reader = p.optBoolean("reader"); val local = p.optBoolean("readLocal", true); prefs.edit().putBoolean("reader", reader).putBoolean("readLocal", local).apply(); speech.setEnabled(!reader && local); qwen.setPlaybackEnabled(!reader); true }
         "status" -> JSONObject().put("gateway", true).put("localModel", true).put("labels", detector.info.labels).put("connection", qwen.state.value.name)
         else -> error("Unsupported command")
     }
@@ -195,7 +201,7 @@ class PixelHomeActivity : ComponentActivity() {
         } finally { if (bitmap !== original) bitmap.recycle(); original.recycle() }
     }
     private fun event(type: String, data: JSONObject) { if (pageReady && !isDestroyed) web.evaluateJavascript("window.nativeEvent?.(${JSONObject().put("type", type).put("data", data)})", null) }
-    override fun onStop() { pageReady = false; lifecycleScope.launch { controller.stop(); provisioner.cancel() }; super.onStop() }
+    override fun onStop() { sessionSerial++; pageReady = false; lifecycleScope.launch { controller.stop(); provisioner.cancel() }; super.onStop() }
     override fun onRestart() { super.onRestart(); pageReady = true; event("state", stateJson(lastState)) }
     override fun onDestroy() { speech.close(); lifecycleScope.launch(NonCancellable) { controller.stop(); detector.close() }; web.destroy(); super.onDestroy() }
 }
