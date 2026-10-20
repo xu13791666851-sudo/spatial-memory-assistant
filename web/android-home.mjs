@@ -51,7 +51,7 @@ const preview=$('camera-preview'),photo=document.createElement('img');photo.id='
 const box=document.createElement('div');box.className='memory-target-overlay';box.hidden=true;box.setAttribute('aria-hidden','true');const label=document.createElement('span');label.className='memory-target-label';box.append(label);preview.append(box);
 let aliases={},labels=[];
 function drawBox(){
- box.hidden=true;if(!frame||!native.running||paused||Date.now()-frame.capturedAt>3000||!native.rememberedObjectId||!['SEARCHING','VERIFYING','GUIDING'].includes(native.searchState))return;
+ box.hidden=true;if(!frame||!native.running||paused||Date.now()-frame.capturedAt>3000||!native.rememberedObjectId||!items.some(r=>r.id===native.rememberedObjectId)||!['SEARCHING','VERIFYING','GUIDING'].includes(native.searchState))return;
  const classes=targetClasses(native.target,labels,aliases),candidates=frame.detections.filter(d=>classes.includes(d.label)&&d.confidence>=.5);
  if(candidates.length!==1)return;
  const rect=preview.getBoundingClientRect(),geometry=containedBox(candidates[0].box,rect.width,rect.height,frame.width,frame.height);if(!geometry)return;

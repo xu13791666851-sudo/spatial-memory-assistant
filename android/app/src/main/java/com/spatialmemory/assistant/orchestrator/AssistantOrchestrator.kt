@@ -46,6 +46,7 @@ class AssistantOrchestrator(
     private var frameWatchdogJob: Job? = null
     private var sourceStateJob: Job? = null
     private var verificationTimeoutJob: Job? = null
+    private var verificationJob: Job? = null
     private var routeToken = 0L
     private var gate = StableCandidateGate()
     private val sceneChangeGate = SceneChangeGate()
@@ -210,7 +211,7 @@ class AssistantOrchestrator(
             message = localText,
             lastSpeech = localText,
         )
-        verifyCandidate(stable, task.targetName, activeMemory?.semanticDescription)
+        verificationJob = scope.launch { verifyCandidate(stable, task.targetName, activeMemory?.semanticDescription) }
     }
 
     private suspend fun verifyCandidate(candidate: ObjectCandidate, target: String, description: String?) {
@@ -230,7 +231,10 @@ class AssistantOrchestrator(
         armVerificationTimeout(request.taskId)
         try {
             qwen.verifyCandidate(candidate.frame, candidate.frame.copy(jpeg = candidate.cropJpeg, rotationDegrees = 0), request)
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Throwable) {
+            if (taskEngine.task?.id != request.taskId) return
             verificationTimeoutJob?.cancel()
             taskEngine.verificationFailed(request.taskId)
             pendingCandidateBox = null
@@ -332,13 +336,14 @@ class AssistantOrchestrator(
             is DialogueIntent.RememberObject -> beginLearning(intent.target)
             DialogueIntent.CompleteSearch -> completeSearch()
             DialogueIntent.Cancel -> cancelSearch()
-            DialogueIntent.ContinueSearch -> mutableState.value = mutableState.value.copy(searchState = SearchState.SEARCHING, message = "继续寻找 ${mutableState.value.target}")
+            DialogueIntent.ContinueSearch -> mutableState.value.target?.let { beginSearch(it) }
             is DialogueIntent.LocationHint -> mutableState.value = mutableState.value.copy(message = "已作为本轮线索，尚未确认：${intent.text}")
             null -> if (sendToQwen) qwen.sendText(text)
         }
     }
 
     suspend fun beginSearch(target: String) {
+        verificationJob?.cancel(); verificationTimeoutJob?.cancel()
         gate = StableCandidateGate()
         sceneChangeGate.reset()
         rejectedBox = null
@@ -369,6 +374,7 @@ class AssistantOrchestrator(
     }
 
     fun beginLearning(target: String) {
+        verificationJob?.cancel(); verificationTimeoutJob?.cancel()
         val task = taskEngine.startLearning(target, mutableState.value.source)
         learningSamples.clear()
         lastLearningSampleAt = 0
@@ -385,6 +391,7 @@ class AssistantOrchestrator(
     }
 
     fun cancelSearch() {
+        verificationJob?.cancel(); verificationTimeoutJob?.cancel()
         val task = taskEngine.cancel()
         candidateDirectory.listFiles()?.forEach { it.delete() }
         task?.let { speech.announce(SpeechEvent("${it.id}:cancelled", "已取消寻找", SpeechPriority.P1)) }
@@ -395,13 +402,13 @@ class AssistantOrchestrator(
         guard.next()
         mutableState.value = AssistantState(message = "已停止")
         qwen.setMicrophoneEnabled(false)
-        val jobs = listOf(sourceJob, processingJob, qwenJob, qwenConnectJob, qwenFrameJob, frameWatchdogJob, sourceStateJob, verificationTimeoutJob)
+        val jobs = listOf(sourceJob, processingJob, qwenJob, qwenConnectJob, qwenFrameJob, frameWatchdogJob, sourceStateJob, verificationTimeoutJob, verificationJob)
         jobs.forEach { it?.cancel() }
         // Release media before waiting for an in-flight HTTP verification.
         source?.stop(); source = null
         qwen.disconnect()
         jobs.forEach { it?.join() }
-        sourceJob = null; processingJob = null; qwenJob = null; qwenConnectJob = null; qwenFrameJob = null; frameWatchdogJob = null; sourceStateJob = null; verificationTimeoutJob = null
+        sourceJob = null; processingJob = null; qwenJob = null; qwenConnectJob = null; qwenFrameJob = null; frameWatchdogJob = null; sourceStateJob = null; verificationTimeoutJob = null; verificationJob = null
         router.stop(); gate.reset(); taskEngine.clear(); speech.reset()
         candidateDirectory.listFiles()?.forEach { it.delete() }
         mutableState.value = AssistantState(message = "已停止")

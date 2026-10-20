@@ -25,4 +25,9 @@ class FindDialogueEngineTest {
     @Test fun `extracts remembered object`() {
         assertEquals(DialogueIntent.RememberObject("杯子"), engine.intent("记住我的杯子的样子"))
     }
+    @Test fun `retries and memory position requests keep the concrete object name`() {
+        assertEquals(DialogueIntent.StartSearch("绿色水杯"), engine.intent("重新帮我找绿色水杯"))
+        assertEquals(DialogueIntent.RememberObject("绿色水杯"), engine.intent("帮我记住绿色水杯的位置"))
+        assertEquals(DialogueIntent.StartSearch("绿色水杯"), engine.intent("再帮我找它", "绿色水杯"))
+    }
 }

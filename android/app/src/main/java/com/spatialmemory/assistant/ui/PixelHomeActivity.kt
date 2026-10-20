@@ -174,8 +174,8 @@ class PixelHomeActivity : ComponentActivity() {
         "complete" -> { controller.finishSearch(); true }
         "replay" -> { speech.announce(SpeechEvent("replay:${System.nanoTime()}", p.getString("text").take(2000), SpeechPriority.P0)); true }
         "memories" -> records.all()
-        "editMemory" -> { records.edit(p); JSONObject().put("items", records.all()).put("answer", "已保存修改。") }
-        "deleteMemory" -> { records.delete(p); JSONObject().put("items", records.all()).put("answer", "已删除这条记忆。") }
+        "editMemory" -> { records.edit(p); if (lastState.rememberedObjectId == p.optString("id")) controller.cancelSearch(); JSONObject().put("items", records.all()).put("answer", "已保存修改。") }
+        "deleteMemory" -> { records.delete(p); if (lastState.rememberedObjectId == p.optString("id")) controller.cancelSearch(); JSONObject().put("items", records.all()).put("answer", "已删除这条记忆。") }
         "source" -> { sessionSerial++; controller.stop(); sourceKind = if (p.optString("source") == "esp32") "esp32" else "phone"; true }
         "scan" -> { check(requirePermissions(true)); JSONArray().apply { provisioner.scan().forEach { put(JSONObject().put("id", it.id).put("name", it.name).put("signal", it.signal)) } } }
         "provision" -> {
