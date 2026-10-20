@@ -1,3 +1,4 @@
+import {icon,wordmark} from '../web/retro-design.mjs';
 // Final presentation layer: keep the existing media/session owners and move
 // only the home layout. Records and their controls keep the original markup.
 export function applyCameraLayout(js,template){
@@ -12,7 +13,7 @@ export function applyCameraLayout(js,template){
  const oldMain=template.match(/<main[\s\S]*?<\/main>/)?.[0];
  // Legacy status nodes are still consumed by the session; keep them offscreen.
  const support=oldMain.replace(/^<main[^>]*>/,'<div hidden id="session-support">').replace(/<\/main>$/,'</div>');
- template=template.replace(oldMain,`<main class="camera-app pixel-frame" aria-label="空间记忆助手"><h1 class="sr-only">空间记忆助手</h1><section class="camera-stage" aria-label="拍摄画面">${camera}<div class="camera-topline"><span id="camera-session-status" role="status">尚未开始</span><span id="scene-label">普通场景</span></div><div class="camera-caption sr-only" hidden>${answer}</div>${pending}</section><footer id="main-action" class="camera-actions" tabindex="-1">${main}${records}</footer>${live}${support}</main>`);
+ template=template.replace(oldMain,`<main class="camera-app pixel-frame" aria-label="空间记忆助手"><h1 class="sr-only">空间记忆助手</h1><div class="camera-brand" aria-hidden="true">${icon('logo')}${wordmark()}</div><section class="camera-stage" aria-label="拍摄画面">${camera}<div class="camera-topline"><span id="camera-session-status" role="status">尚未开始</span><span id="scene-label">普通场景</span></div><div class="camera-caption sr-only" hidden>${answer}</div>${pending}</section><footer id="main-action" class="camera-actions" tabindex="-1">${main}${records}</footer>${live}${support}</main>`);
  // There must be only one action landmark after moving the primary button.
  template=template.replace('<div id="main-action" class="main-actions" tabindex="-1">','<div class="legacy-actions">');
  template=template.replace(/<label class="scene-picker"[\s\S]*?<\/label>/,'');
