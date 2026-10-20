@@ -20,3 +20,13 @@ test('Netlify build replaces cached Cloudflare headers with the current preview 
     assert.match(headers,/Cache-Control: no-store/);
   }finally{await fs.rm(temp,{recursive:true,force:true});}
 });
+
+test('preview document middleware updates only the stream connection directive and only on the preview host',async()=>{
+  const {default:handle}=await import('../netlify/edge-functions/vision-preview-headers.js');
+  const csp="default-src 'self'; connect-src 'self'; frame-ancestors 'none'; script-src 'self'";
+  const next=async()=>new Response('<html>test</html>',{headers:{'Content-Type':'text/html','Content-Security-Policy':csp,'Cache-Control':'no-store'}});
+  const preview=await handle(new Request('https://deploy-preview-8--spatial-memory-xuziyi.netlify.app/video/'),{next});
+  assert.equal(preview.headers.get('Content-Security-Policy'),csp.replace("connect-src 'self'","connect-src 'self' wss://spatial-memory-vision-preview.xu13791666851.workers.dev"));
+  assert.equal(await preview.text(),'<html>test</html>');assert.equal(preview.headers.get('Cache-Control'),'no-store');
+  const production=await handle(new Request('https://spatial-memory-xuziyi.netlify.app/video/'),{next});assert.equal(production.headers.get('Content-Security-Policy'),csp);
+});
