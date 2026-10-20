@@ -19,6 +19,7 @@ await page.addInitScript(()=>{
 let vision=0,inflight=0,maxInflight=0;const images=[];
 await page.route('**/*',async route=>{
  const u=new URL(route.request().url());if(u.hostname!=='ui.test')return route.abort();
+ if(u.pathname==='/static/vision-stream-config.mjs')return route.fulfill({body:"export const VISION_STREAM_URL='';",contentType:'text/javascript'});
  if(u.pathname==='/api/access')return route.fulfill({json:{configured:true,authenticated:true}});
  if(u.pathname==='/api/realtime/sdp')return route.fulfill({body:'v=0\r\n'});
  if(u.pathname==='/api/vision'){

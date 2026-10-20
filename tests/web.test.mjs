@@ -157,7 +157,7 @@ function runtimeFixture(options={}){
     if(url!=='/api/vision'||!response.ok||options.rawVision)return response;
     return Response.json({...await response.json(),request_id:JSON.parse(init.body).request_id,frame_received:true,frame_status:'clear'});
   };
-  const runtime=createRuntime({storage:data,document,RTCPeerConnection:class{},...options,fetch:fixtureFetch});
+  const runtime=createRuntime({storage:data,document,RTCPeerConnection:class{},visionStreamUrl:'',...options,fetch:fixtureFetch});
   return {runtime,data,preview,audio,document};
 }
 test('a fresh browser is ready without a login or persisted credentials',async()=>{

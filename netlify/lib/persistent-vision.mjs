@@ -72,7 +72,7 @@ export class PersistentVision{
   close(code='observation_cancelled'){
     if(this.closed)return;this.closed=true;clearTimeout(this.connectTimer);this.readyReject(Error(code));
     const run=this.current;this.current=null;
-    if(run){clearTimeout(run.timer);run.image=null;run.signal?.removeEventListener('abort',run.abort);run.reject(Error(code));}
+    if(run){if(code==='observation_timeout')console.warn('vision_observation_timeout',run.stage);clearTimeout(run.timer);run.image=null;run.signal?.removeEventListener('abort',run.abort);run.reject(Error(code));}
     this.queue=[];try{this.socket?.close();}catch{}
   }
 }
