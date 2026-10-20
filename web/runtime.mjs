@@ -420,7 +420,7 @@ export function createRuntime(env){
     }
     clearVideoTrack(){this.mediaGeneration++;this.videoTrack?.stop();this.videoTrack=null;this.videoSender?.replaceTrack(null).catch(()=>{});}
     endVideo(message){
-      if(this.sceneCommit?.streaming){this.localSpeechToken=null;this.visualPending=false;this.suppressResponse=false;this.emit({type:'app.scene_cancel'});}
+      if(this.sceneCommit){this.localSpeechToken=null;this.visualPending=false;this.suppressResponse=true;this.control({type:'response.cancel'});this.emit({type:'app.scene_cancel'});}
       dialogue.saving=null;this.sceneTask=null;
       const id=this.videoId;this.videoId=null;clearTimeout(this.videoTimer);this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.scene.stop();this.clearVideoTrack();
       if(this.queuedReply?.automatic)this.queuedReply=null;

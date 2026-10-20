@@ -748,3 +748,10 @@ test('unmatched or unverified image results cannot enter chat or memory',async t
   assert.ok(events.some(e=>e.type==='app.video_error'));assert.equal(events.some(e=>e.type==='app.scene_fallback'||e.saved===true),false);assert.ok(!bridge.currentScene);
  }
 });
+
+test('failed observation releases visual suppression so ordinary conversation can continue',async t=>{
+ const {bridge,events}=visualFixture({fetch:async url=>url==='/api/vision'?Response.json({detail:'这次没有获取到画面'},{status:502}):Response.json({configured:true,authenticated:true})});t.after(()=>bridge.close());
+ bridge.send(JSON.stringify({type:'video_start',id:'failed-continue',duration:30}));await settle();bridge.scene.config.onReady();await settle();
+ assert.ok(events.some(e=>e.type==='app.video_error'));assert.equal(bridge.visualPending,false);
+ bridge.send(JSON.stringify({type:'text',text:'你好'}));assert.equal(bridge.suppressResponse,false);assert.equal(bridge.closed,false);
+});
