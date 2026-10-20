@@ -1,4 +1,5 @@
-/* Home layout only. Colors, artwork and all record/dialog styles remain retro. */
+/* Preserve retro styling; home and return controls share accessible sizing. */
+body[data-page=assistant]{--camera-control-height:clamp(104px,16svh,140px);--camera-control-text:26px;--camera-control-icon:28px}
 body[data-page=assistant] main.camera-app{height:calc(var(--app-height,100dvh) - 16px);display:flex;flex-direction:column;gap:14px;padding:12px;max-width:1080px;overflow:hidden}
 .camera-brand{display:flex;align-items:center;gap:7px;min-height:26px;flex:none;padding:0 4px;color:var(--ink);pointer-events:none}
 .camera-brand .pixel-icon{width:22px;height:22px}.camera-brand .pixel-wordmark-art{width:132px;height:auto;flex:none}
@@ -13,13 +14,15 @@ body[data-page=assistant] .camera-app #camera-empty::before{width:40px;height:40
 body[data-page=assistant] .camera-app #camera-empty p{font-size:19px;line-height:1.7;font-weight:600;margin:0;text-align:center}
 .camera-topline{position:absolute;top:16px;left:16px;right:16px;display:flex;gap:8px;justify-content:space-between;align-items:flex-start;pointer-events:none;z-index:2}
 .camera-topline span{font-size:12px;line-height:1.5;color:var(--ink);background:#ecf6fff0;border:1px solid var(--line);padding:5px 8px;border-radius:6px;max-width:75%}
-.camera-topline #scene-label{white-space:nowrap}
+.camera-topline #scene-label{white-space:nowrap;margin-left:auto}
 body[data-page=assistant] .camera-actions{display:grid;grid-template-columns:1fr 1fr;gap:12px;flex:none;padding:0 0 env(safe-area-inset-bottom);margin:0;background:transparent}
-body[data-page=assistant] .camera-actions button{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:clamp(104px,16svh,140px);font-size:26px;font-weight:800;line-height:1.4;padding:10px 6px;grid-row:auto;grid-column:auto}
+body[data-page=assistant] .camera-actions button{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:var(--camera-control-height);font-size:var(--camera-control-text);font-weight:800;line-height:1.4;padding:10px 6px;grid-row:auto;grid-column:auto}
 body[data-page=assistant] .camera-actions #main-toggle{border:6px solid transparent;border-image:url('/static/retro-primary.svg') 12 fill / 6px / 0 stretch;background:transparent;color:#fff;border-radius:0;filter:drop-shadow(0 2px 0 #87cdd8)}
 body[data-page=assistant] .camera-actions #open-records{border:1px solid var(--line);background:#e8f3ff;color:var(--ink);border-radius:8px}
-.camera-actions .pixel-icon{width:28px;height:28px}
+.camera-actions .pixel-icon{width:var(--camera-control-icon);height:var(--camera-control-icon)}
+body[data-page=assistant] .records-footer #pixel-records-home{min-height:var(--camera-control-height);font-size:var(--camera-control-text);font-weight:800;line-height:1.4;padding:10px 6px}
+.records-footer #pixel-records-home .pixel-icon{width:var(--camera-control-icon);height:var(--camera-control-icon)}
 .camera-stage #pending{position:absolute;z-index:4;bottom:12px;left:12px;right:12px;max-height:75%;overflow:auto;margin:0;background:var(--bg);padding:16px;border:1px solid var(--line)}
 .camera-app #session-support{display:none!important}
-@media(max-width:350px){body[data-page=assistant] main.camera-app{height:calc(var(--app-height,100dvh) - 10px);padding:7px;gap:10px}body[data-page=assistant] .camera-actions{gap:8px}body[data-page=assistant] .camera-actions button{font-size:23px;min-height:96px;gap:5px}.camera-actions .pixel-icon{width:20px;height:20px}.camera-topline{left:12px;right:12px;top:12px}.camera-topline span{font-size:11px}}
-@media(max-height:500px){body[data-page=assistant] main.camera-app{gap:8px;padding:6px}body[data-page=assistant] .camera-actions button{min-height:72px;font-size:22px}.camera-topline{top:10px}}
+@media(max-width:350px){body[data-page=assistant]{--camera-control-height:96px;--camera-control-text:23px;--camera-control-icon:20px}body[data-page=assistant] main.camera-app{height:calc(var(--app-height,100dvh) - 10px);padding:7px;gap:10px}body[data-page=assistant] .camera-actions{gap:8px}body[data-page=assistant] .camera-actions button{gap:5px}.camera-topline{left:12px;right:12px;top:12px}.camera-topline span{font-size:11px}}
+@media(max-height:500px){body[data-page=assistant]{--camera-control-height:72px;--camera-control-text:22px}body[data-page=assistant] main.camera-app{gap:8px;padding:6px}.camera-topline{top:10px}}
