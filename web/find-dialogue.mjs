@@ -1,14 +1,14 @@
-import {normalizeName,rememberCommand} from './memory.mjs';
+import {normalizeName,rememberCommand,VisualEvidenceError,MemoryPersistenceError} from './memory.mjs';
 
 const clean=text=>String(text||'').trim().replace(/^(?:你好)?(?:小忆|小意|小易)[，,\s]*/,'').replace(/[。！？!?]+$/,'');
 export function visualRememberIntent(text,focus=''){
   const value=clean(text);
   if(rememberCommand(value))return null;
   if(/^(?:请|帮我)?(?:记住|更新)(?:它|这个|那个)?(?:现在的)?位置(?:到这里)?$/.test(value)||/^(?:请|帮我)?更新到这里$/.test(value))return {name:focus};
-  const match=value.match(/^(?:请|帮我)?记住[，,：:\s]*(.{1,45}?)(?:现在)?的位置$/);
+  const match=value.match(/^(?:请|帮我)?记住[，,：:\s]*(.{1,60}?)(?:现在)?的位置$/);
   if(!match)return null;
   const name=normalizeName(match[1]);
-  return {name:/^(它|这个|那个)$/.test(name)?focus:name};
+  return {name:/^(它|这个|那个|物品|东西)$/.test(name)?focus:name};
 }
 export function searchTarget(text,focus=''){
   const value=clean(text).replace(/^(?:请|帮我)/,'');
@@ -87,7 +87,14 @@ export class FindDialogue{
       if(result.target_visible===true&&candidate?.unique===true&&candidate.location_supported===true&&candidate.anchor&&candidate.location){
         let saved;
         try{saved=this.memory.saveVisual(pending.name,candidate,result.observedAt);}
-        catch{this.saving=null;return {answer:'这次位置没有保存成功，请重新说“记住这个物品的位置”。',saved:false};}
+        catch(error){
+          if(error instanceof VisualEvidenceError){
+            this.lastQuestion=`还没确认${pending.name}与参照物的位置关系。请把它和所在桌面或柜子一起拍清楚，再说“这样呢”。`;
+            return {answer:'还没有保存。'+this.lastQuestion,saved:false};
+          }
+          this.saving=null;
+          return {answer:error instanceof MemoryPersistenceError?`这次位置没有保存成功：浏览器未能读写物品记忆。你的“记住${pending.name}的位置”指令没有问题。请检查浏览器存储权限；如果在微信内打开，可以改用 Safari 后重新记录。`:`记录${pending.name}时发生了错误，这次未能确认保存成功。请稍后重试。`,saved:false};
+        }
         this.saving=null;this.misses=0;this.objectId=saved.record.object_id||saved.record.id;
         return saved;
       }

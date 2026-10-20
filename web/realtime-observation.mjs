@@ -1,4 +1,4 @@
-import {PERSON_CONTEXT_RULES} from './person-context.mjs';
+import {visualCandidateProblem} from './memory.mjs';
 
 // Evidence is model output, never authority to save. The caller owns consent,
 // scene identity, cancellation, and the actual storage transaction.
@@ -9,13 +9,13 @@ export function validateObservation(result,task=null){
   const knownAnchor=v=>short(v,60)&&objects.some(o=>o.name===v)&&!/^(?:画面|这里|那里|左边|右边|上方|下方|镜头)$/.test(v);
   const raw=result.memory_candidate,step=result.next_step;
   return {answer:result.answer.trim(),objects,target_visible:typeof result.target_visible==='boolean'?result.target_visible:null,
-    memory_candidate:task?.remember&&raw&&typeof raw.unique==='boolean'?{unique:raw.unique,location_supported:raw.location_supported===true&&!!knownAnchor(raw.anchor)&&!!short(raw.location,120),anchor:knownAnchor(raw.anchor)?raw.anchor:'',location:short(raw.location,120)?raw.location:''}:null,
+    memory_candidate:task?.remember&&raw&&typeof raw.unique==='boolean'?{unique:raw.unique,location_supported:!visualCandidateProblem(raw)&&!!knownAnchor(raw.anchor)&&!!short(raw.location,120),anchor:knownAnchor(raw.anchor)?raw.anchor:'',location:short(raw.location,120)?raw.location:''}:null,
     next_step:task&&step?.kind==='reframe'&&knownAnchor(step.anchor)&&short(step.question,100)?{kind:'reframe',anchor:step.anchor,question:step.question}:null};
 }
 const str={type:'string'},bool={type:'boolean'};
 export const observationTool={type:'function',function:{name:'report_observation',description:'只提交本次实时视频的可见证据，不能保存记忆。',parameters:{type:'object',properties:{
   observation_id:str,frame_status:{type:'string',enum:['clear','uncertain']},answer:str,objects:{type:'array',items:{type:'object',properties:{name:str,position:str},required:['name','position']}},
-  target_visible:bool,memory_candidate:{type:'object',properties:{unique:bool,location_supported:bool,anchor:str,location:str}},
+  target_visible:bool,memory_candidate:{type:'object',properties:{unique:bool,location_supported:bool,anchor:{type:'string',description:'稳定参照物名称，与objects中的name完全相同'},location:{type:'string',description:'目标在承载面及参照物附近的位置，必须包含完整anchor原文；如anchor为笔记本电脑，则不能缩写成电脑'}},required:['unique','location_supported','anchor','location']},
   next_step:{type:'object',properties:{kind:{type:'string',enum:['reframe']},anchor:str,question:str}}
 },required:['observation_id','frame_status','answer','objects'],additionalProperties:false}}};
 

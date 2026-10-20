@@ -58,3 +58,8 @@ test('HTTP boundary validates frame and origin, never accepts client routing/key
  const f=provider();const response=await understand(request({image:'/9j/AAAA',request_id:'request-123',task:args.task,key:'ignored',workspace:'evil'}),f.connect,env);assert.equal(response.status,200);const text=await response.text();assert.ok(!text.includes(env.DASHSCOPE_API_KEY));assert.equal(JSON.parse(text).request_id,'request-123');
  const error=await understand(request({image:'/9j/AAAA',request_id:'request-123'}),()=>{throw Error(env.DASHSCOPE_API_KEY);},env);assert.equal(error.status,502);assert.ok(!(await error.text()).includes(env.DASHSCOPE_API_KEY));
 });
+
+test('provider and persistence use the same full-anchor location rule',()=>{
+ const invalid=validateObservation({...evidence,memory_candidate:{...evidence.memory_candidate,anchor:'台灯',location:'桌子上，电脑旁'}},args.task);
+ assert.equal(invalid.memory_candidate.location_supported,false);
+});

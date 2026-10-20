@@ -16,6 +16,19 @@ export function rememberCommand(text){
   const match=value.match(/^(?:记住|请记住|帮我记住)[，,：:\s]*(?:我)?(?:(昨天|刚刚|刚才|今天)[，,\s]*)?(?:把)?(.+?)(?:刚放在|放在|在)(.+?)[。！!]?$/);
   return match?{action:'record',name:match[2],location:match[3],event_time:match[1]||'时间未说明'}:null;
 }
+// Shared by provider validation and local persistence: a result cannot pass
+// observation validation and then fail the same location rule at save time.
+export function visualCandidateProblem(candidate){
+  try{
+    const location=clean(candidate?.location),anchor=clean(candidate?.anchor,60);
+    if(candidate.unique!==true||candidate.location_supported!==true)return 'unsupported';
+    if(/^(?:画面|这里|那里|镜头)$/.test(anchor)||/^(?:画面)?(?:左|右|上|下|前|后)(?:边|侧|面|方)?$/.test(anchor))return 'unstable_anchor';
+    if(!location.includes(anchor))return 'missing_anchor_reference';
+    return null;
+  }catch{return 'invalid_location';}
+}
+export class VisualEvidenceError extends Error{}
+export class MemoryPersistenceError extends Error{}
 export class Memory {
   constructor(storage,clock=()=>Date.now(),uuid=()=>crypto.randomUUID()){
     this.storage=storage;this.clock=clock;this.uuid=uuid;this.pending=null;this.last='';this.key='spatial-memory.records.v1';
@@ -48,12 +61,17 @@ export class Memory {
     return {...this.result('已保存你修改的“'+name+'”记录，尚未确认现在的位置。'),saved:true,record};
   }
   saveVisual(name,candidate,observedAt){
-    name=clean(normalizeName(name),40);
+    name=clean(normalizeName(name),60);
+    if(visualCandidateProblem(candidate))throw new VisualEvidenceError('物品与位置参照之间的关系还不完整。');
     const location=clean(candidate.location),anchor=clean(candidate.anchor,60);
-    if(candidate.unique!==true||candidate.location_supported!==true||!location.includes(anchor)||/^(?:画面)?(?:左|右|上|下|前|后)(?:边|侧|面|方)?$/.test(anchor))throw Error('缺少稳定的位置参照。');
-    const rows=this.rows(),old=this.all().find(r=>normalizeName(r.name)===name);
+    let rows,old;
+    try{rows=this.rows();old=this.all().find(r=>normalizeName(r.name)===name);}catch{throw new MemoryPersistenceError('浏览器中的物品记忆暂时无法读取。');}
     const record={id:this.uuid(),object_id:old?.object_id||old?.id||this.uuid(),place:'home',name,location,anchor,event_time:'观察时',observed_at:observedAt||new Date(this.clock()).toISOString(),recorded_at:new Date(this.clock()).toISOString(),source:'USER_REQUESTED_VISUAL',state:'HISTORICAL'};
-    rows.push(record);this.storage.setItem(this.key,JSON.stringify(rows));
+    rows.push(record);
+    try{
+      this.storage.setItem(this.key,JSON.stringify(rows));
+      if(!this.rows().some(r=>r.id===record.id&&r.name===name&&r.location===location))throw Error('write not retained');
+    }catch{throw new MemoryPersistenceError('浏览器没有成功保存物品记忆。');}
     this.last=name;this.pending=null;
     return {...this.result(`已记住：${name}在${location}。这是本次观察的位置，以后需要时可以重新确认。`),saved:true,record};
   }

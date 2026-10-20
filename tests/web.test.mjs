@@ -755,3 +755,30 @@ test('failed observation releases visual suppression so ordinary conversation ca
  assert.ok(events.some(e=>e.type==='app.video_error'));assert.equal(bridge.visualPending,false);
  bridge.send(JSON.stringify({type:'text',text:'你好'}));assert.equal(bridge.suppressResponse,false);assert.equal(bridge.closed,false);
 });
+
+test('visual remember accepts arbitrary item names and persists the requested identity without a second confirmation',async t=>{
+ for(const name of ['绿色水杯','黑色耳机','钥匙','一本红色笔记本','充电宝','白色药盒','遥控器','小熊玩偶','我的工具袋']){
+  const {runtime,bridge,events,data}=visualFixture({fetch:async url=>Response.json(url==='/api/vision'?seenCup:{configured:true,authenticated:true})});t.after(()=>bridge.close());runtime.setPlace('home');
+  say(bridge,`帮我记住${name}的位置`);await finishPicture(bridge);
+  assert.equal(new Memory(data).get(name)?.name,name);assert.match(lastAnswer(events),/^已记住/);assert.ok(lastAnswer(events).includes(name));assert.equal(runtime.memory.pending,null);
+ }
+});
+test('inconsistent anchor wording requests clarification and retains consent for a fresh corrected frame',async t=>{
+ let result={...seenCup,memory_candidate:{...candidate,anchor:'木桌',location:'桌面上，纸巾盒旁边'}};
+ const {runtime,bridge,events}=visualFixture({fetch:async url=>Response.json(url==='/api/vision'?result:{configured:true,authenticated:true})});t.after(()=>bridge.close());runtime.setPlace('home');
+ say(bridge,'帮我记住绿色水杯的位置');await finishPicture(bridge);
+ assert.equal(runtime.memory.all().length,0);assert.match(lastAnswer(events),/拍进来/);assert.doesNotMatch(lastAnswer(events),/保存成功|重新说/);
+ result=seenCup;say(bridge,'这样呢');await finishPicture(bridge);
+ assert.equal(runtime.memory.get('绿色水杯').location,candidate.location);assert.match(lastAnswer(events),/^已记住：绿色水杯/);
+});
+test('storage write failures name the actual item and never blame the remember command',async t=>{
+ for(const local of [{getItem:()=>null,setItem:()=>{throw Error('QuotaExceededError');}},{getItem:()=>null,setItem:()=>{}}]){
+  const {runtime,bridge,events}=visualFixture({storage:local,fetch:async url=>Response.json(url==='/api/vision'?seenCup:{configured:true,authenticated:true})});t.after(()=>bridge.close());runtime.setPlace('home');
+  say(bridge,'帮我记住绿色水杯的位置');await finishPicture(bridge);
+  assert.match(lastAnswer(events),/浏览器未能读写/);assert.match(lastAnswer(events),/绿色水杯/);assert.doesNotMatch(lastAnswer(events),/重新说“记住这个物品/);assert.equal(runtime.memory.all().length,0);
+ }
+});
+test('generic this item asks for identity when there is no active target',async()=>{
+ const {FindDialogue}=await import('../web/find-dialogue.mjs');const memory=new Memory(storage()),dialogue=new FindDialogue(memory);
+ assert.match(dialogue.intent('帮我记住这个物品的位置','home').answer,/物品名称/);assert.equal(dialogue.saving,null);
+});
