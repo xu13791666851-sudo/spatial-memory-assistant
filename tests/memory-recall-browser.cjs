@@ -25,6 +25,22 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
  await page.evaluate(()=>window.recallTest.speak('我不记得放哪里了，你帮我看看之前我放在哪里了'));
  const answer=await page.locator('#chat .chat-turn').last().innerText();assert.match(answer,/纸杯在书桌上，电脑左侧/);assert.match(answer,/还没有确认现在的位置/);
  assert.equal(await page.evaluate(()=>localStorage.getItem('spatial-memory.records.v1')),stored);
+
+ await page.evaluate(()=>{
+  const key='spatial-memory.records.v1';localStorage.setItem(key,JSON.stringify([
+   {id:'old-headphones',name:'耳机',location:'键盘右侧、笔记本左侧之间',recorded_at:'2026-10-20T07:00:00Z',source:'USER_REQUESTED_VISUAL',state:'HISTORICAL'},
+   {id:'white-headphones',name:'白色耳机',location:'桌面黑色键盘右侧',appearance:'白色椭圆形耳机充电盒',recorded_at:'2026-10-20T07:09:00Z',source:'USER_REQUESTED_VISUAL',state:'HISTORICAL'}
+  ]));
+ });
+ await page.reload();await page.waitForFunction(()=>!!window.recallTest);
+ await page.selectOption('#place-mode','home');
+ const headphoneData=await page.evaluate(()=>localStorage.getItem('spatial-memory.records.v1'));
+ for(const text of ['我找不到我的白色耳机了，帮我找一下在哪里','帮我寻找白色耳机','我的物品在哪']){
+  await send(text);const answer=await page.locator('#chat .chat-turn').last().innerText();assert.match(answer,/白色耳机在桌面黑色键盘右侧/);assert.doesNotMatch(answer,/多条|可能|抽屉|显示器后面/);
+ }
+ await page.evaluate(()=>window.recallTest.speak('我找不到我的白色耳机了，帮我找一下在哪里'));
+ assert.match(await page.locator('#chat .chat-turn').last().innerText(),/白色耳机在桌面黑色键盘右侧/);
+ assert.equal(await page.evaluate(()=>localStorage.getItem('spatial-memory.records.v1')),headphoneData);
  assert.ok(apiRequests.every(url=>url==='/api/access'));assert.deepEqual(errors,[]);
- console.log('PASS: visual record recalled by natural typed and voice questions, with camera/model unavailable, survives reload, preserves saved data');
+ console.log('PASS: legacy headphone duplicates resolve by exact name; lost-item questions read memory without camera/model; visual record recalled by natural typed and voice questions, with camera/model unavailable, survives reload, preserves saved data');
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

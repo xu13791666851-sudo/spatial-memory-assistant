@@ -2,7 +2,7 @@ import {normalizeName,sameType,rememberCommand,requestText,appearanceText,Visual
 import {asksHistory} from './interaction.mjs';
 
 const clean=text=>String(text||'').trim().replace(/^(?:你好)?(?:小忆|小意|小易)[，,\s]*/,'').replace(/[。！？!?]+$/,'');
-const pronoun=name=>/^(?:我|它|他|她|这个|那个|这件|那件|这个物品|那个东西)?$/.test(name);
+const pronoun=name=>/^(?:我|它|他|她|这个|那个|这件|那件|物品|东西|这个物品|那个东西)?$/.test(name);
 export const asksCurrentView=text=>!asksHistory(text)&&/(?:现在|当前|眼前|画面|镜头|这里|这边|再看|拍到|照到|对准)/.test(text);
 // Parse the location question before the generic “看看…” search command. Scan
 // every clause: conversational preambles must not hide the actual query.
@@ -10,6 +10,12 @@ export function locationQuery(text,focus=''){
   const clauses=clean(text).split(/[，,；;。！？!?]|(?=(?:你)?帮我)/).filter(Boolean);
   let implicit=null;
   for(const clause of clauses){
+    const lost=clause.trim().match(/^(?:我)?(?:现在)?(?:找不到|找不着)(?:我的|我)?(.+?)(?:了)?$/);
+    if(lost){
+      const name=normalizeName(lost[1]);
+      if(pronoun(name)){implicit={target:focus,implicit:true};continue;}
+      if(name.length<=60)return {target:name,implicit:false};
+    }
     let value=requestText(clause.trim())
       .replace(/^(?:我)?(?:现在)?(?:想要|想|需要|要)(?:知道|查一下|查询|问一下|问问)/,'')
       .replace(/^(?:你)?(?:还)?(?:记不记得|记得)/,'')
@@ -149,7 +155,7 @@ export class FindDialogue{
           this.saving=null;
           return {answer:error instanceof MemoryPersistenceError?`这次位置没有保存成功：浏览器未能读写物品记忆。你的“记住${pending.name}的位置”指令没有问题。请检查浏览器存储权限；如果在微信内打开，可以改用 Safari 后重新记录。`:`记录${pending.name}时发生了错误，这次未能确认保存成功。请稍后重试。`,saved:false};
         }
-        this.saving=null;this.misses=0;this.objectId=saved.record.object_id||saved.record.id;
+        this.saving=null;this.focus(saved.record.name);this.misses=0;this.objectId=saved.record.object_id||saved.record.id;
         return saved;
       }
       // Never relay a model's uncommitted "已记住" acknowledgement.
@@ -169,13 +175,13 @@ export class FindDialogue{
     if(result.target_visible!==false)return {answer:result.answer+' 请把目标区域拍清楚，再说“这样呢”。'};
     this.misses++;
     const matches=task.allowHistory?this.memory.find(this.target):[],saved=matches.length===1?matches[0]:null;
-    let answer=result.answer;
-    if(this.misses===1&&saved){
-      this.objectId=saved.object_id||saved.id;answer+=` 你上次记录${saved.name}在${saved.location}，但我现在还没看到，不能确认仍在那里。`;
-      this.lastQuestion='可以把镜头对准这个位置吗？';
-    }else if(this.misses===1&&matches.length>1){this.choices=matches;this.lastQuestion=this.memory.answer(this.target);}
+    // A model's free-form miss may guess drawers or occluded locations.
+    // Compose this answer from the actual saved record and validated framing hint.
+    let answer=`当前画面没有看到${this.target}。`;
+    if(saved){this.objectId=saved.object_id||saved.id;answer=`你上次记录${saved.name}在${saved.location}。${answer}还不能确认现在是否仍在那里。`;}
+    if(matches.length>1){this.choices=matches;this.lastQuestion=this.memory.answer(this.target);}
     else if(result.next_step?.kind==='reframe'&&result.next_step.anchor&&result.next_step.question&&result.next_step.question!==this.lastQuestion){this.lastQuestion=result.next_step.question;}
-    else this.lastQuestion=saved?'那里暂时没找到。你后来有没有把它拿到其他地方？':'你最后一次使用它是在什么地方？';
+    else this.lastQuestion=saved?(this.misses>1?'你后来有没有把它拿到其他地方？':'可以把镜头对准记录的位置吗？'):'你最后一次使用它是在什么地方？';
     return {answer:answer+' '+this.lastQuestion};
   }
 }

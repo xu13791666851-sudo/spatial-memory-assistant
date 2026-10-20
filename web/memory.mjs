@@ -7,6 +7,11 @@ const clean=(value,max=120)=>{
 export const normalizeName=value=>String(value||'').trim().replace(/[，。！？!?,]+$/,'').replace(/^(?:这个|那个|这只|那只|这一个|那一个|一个|一只)(?:的)?/,'').trim();
 export const appearanceText=value=>typeof value==='string'&&value.trim().length<=150&&!/[\x00-\x1f]/.test(value)?value.trim():'';
 const canonical=value=>normalizeName(value).replace(/^我的/,'').replace(/玻璃杯|水杯/g,'杯子').replace(/杯$/,'杯子').replace(/的/g,'');
+const leadingColor=value=>canonical(value).match(/^(?:浅|深)?(白|黑|红|绿|蓝|黄|粉|紫|橙|灰|棕|透明)(?:色)?/)?.[1];
+const compatibleColor=(record,name,appearance='')=>{
+  const before=leadingColor(record.name)||leadingColor(record.appearance),after=leadingColor(name)||leadingColor(appearance);
+  return !before||!after||before===after;
+};
 export const sameType=(a,b)=>{
   a=canonical(a);b=canonical(b);
   return !!a&&!!b&&(a===b||a.endsWith(b)||b.endsWith(a));
@@ -41,8 +46,27 @@ export class Memory {
     if(!Array.isArray(raw))throw Error('本机记录无法读取，请先检查浏览器数据。');
     return raw.filter(r=>r&&typeof r.name==='string'&&typeof r.location==='string'&&typeof r.recorded_at==='string'&&['MANUAL','USER_REQUESTED_VISUAL'].includes(r.source)&&r.state==='HISTORICAL'&&(!r.place||r.place==='home'));
   }
-  all(){const map=new Map();for(const r of this.rows())map.set(normalizeName(r.name),r);return [...map.values()].reverse();}
-  find(name){return this.all().filter(r=>sameType(r.name,name));}
+  all(){
+    const names=new Set(),ids=new Set(),items=[];
+    for(const r of this.rows().reverse()){
+      const key=canonical(r.name),id=r.object_id||r.id;
+      if(names.has(key)||(id&&ids.has(id)))continue;
+      names.add(key);if(id)ids.add(id);items.push(r);
+    }
+    return items;
+  }
+  find(name){
+    const rows=this.all(),exact=rows.filter(r=>canonical(r.name)===canonical(name));
+    if(exact.length)return exact;
+    return rows.filter(r=>compatibleColor(r,name)&&(sameType(r.name,name)||(Array.isArray(r.aliases)&&r.aliases.some(a=>canonical(a)===canonical(name)))));
+  }
+  identity(name,appearance=''){
+    const matches=this.find(name);if(matches.length!==1)return null;
+    const old=matches[0];if(canonical(old.name)===canonical(name))return old;
+    // A more general name may update the sole known object, but an explicit
+    // conflicting visible color must create its own record.
+    return compatibleColor(old,name,appearance)?old:null;
+  }
   get(name){const rows=this.find(name);return rows.length===1?rows[0]:null;}
   answer(name){
     const rows=this.find(name);
@@ -67,10 +91,11 @@ export class Memory {
     name=clean(normalizeName(name),60);
     if(visualCandidateProblem(candidate))throw new VisualEvidenceError('物品与位置参照之间的关系还不完整。');
     const location=clean(candidate.location),anchor=clean(candidate.anchor,60);
-    let rows,old;
-    try{rows=this.rows();old=this.all().find(r=>normalizeName(r.name)===name);}catch{throw new MemoryPersistenceError('浏览器中的物品记忆暂时无法读取。');}
+    let rows,old;const requestedName=name;
+    try{rows=this.rows();old=this.identity(name,candidate.appearance);}catch{throw new MemoryPersistenceError('浏览器中的物品记忆暂时无法读取。');}
+    if(old&&canonical(old.name).length>canonical(name).length)name=old.name;
     const observedAppearance=appearanceText(candidate.appearance),appearance=observedAppearance||appearanceText(old?.appearance);
-    const record={id:this.uuid(),object_id:old?.object_id||old?.id||this.uuid(),place:'home',name,location,anchor,appearance,event_time:'观察时',observed_at:observedAt||new Date(this.clock()).toISOString(),recorded_at:new Date(this.clock()).toISOString(),source:'USER_REQUESTED_VISUAL',state:'HISTORICAL'};
+    const record={id:this.uuid(),object_id:old?.object_id||old?.id||this.uuid(),aliases:[...new Set([...(old?.aliases||[]),old?.name,requestedName].filter(Boolean))],place:'home',name,location,anchor,appearance,event_time:'观察时',observed_at:observedAt||new Date(this.clock()).toISOString(),recorded_at:new Date(this.clock()).toISOString(),source:'USER_REQUESTED_VISUAL',state:'HISTORICAL'};
     rows.push(record);
     try{
       this.storage.setItem(this.key,JSON.stringify(rows));
@@ -81,9 +106,10 @@ export class Memory {
   }
   remember(text){
     const command=rememberCommand(text);if(!command)return null;
-    const name=clean(normalizeName(command.name),40),location=clean(command.location),event_time=clean(command.event_time,80);
-    const rows=this.rows(),old=this.all().find(r=>normalizeName(r.name)===name);
-    rows.push({id:this.uuid(),object_id:old?.object_id||old?.id,appearance:appearanceText(old?.appearance),place:'home',name,location,event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'});
+    let name=clean(normalizeName(command.name),40);const requestedName=name,location=clean(command.location),event_time=clean(command.event_time,80);
+    const rows=this.rows(),old=this.identity(name);
+    if(old&&canonical(old.name).length>canonical(name).length)name=old.name;
+    rows.push({id:this.uuid(),object_id:old?.object_id||old?.id||this.uuid(),aliases:[...new Set([...(old?.aliases||[]),old?.name,requestedName].filter(Boolean))],appearance:appearanceText(old?.appearance),place:'home',name,location,event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'});
     this.storage.setItem(this.key,JSON.stringify(rows));
     this.last=name;this.pending=null;
     return {...this.result(`已记住：${name}在${location}。这是你提供的家中历史位置，需要时我会重新看眼前确认。`),saved:true};
@@ -102,7 +128,7 @@ export class Memory {
     if(!p||p.token!==token||p.expires<=this.clock()){this.pending=null;throw Error('待确认操作已失效，请重新说明。');}
     if(cancel){this.pending=null;return this.result('已取消。');}
     const rows=this.rows();const old=this.all().find(r=>normalizeName(r.name)===normalizeName(p.name));
-    const next=p.action==='delete'?rows.filter(r=>normalizeName(r.name)!==normalizeName(p.name)):[...rows,{id:this.uuid(),object_id:old?.object_id||old?.id,appearance:appearanceText(old?.appearance),place:'home',name:p.name,location:p.location,event_time:p.action==='correct'?old.event_time:p.event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'}];
+    const next=p.action==='delete'?rows.filter(r=>canonical(r.name)!==canonical(p.name)&&!((old?.object_id||old?.id)&&(r.object_id||r.id)===(old.object_id||old.id))):[...rows,{id:this.uuid(),object_id:old?.object_id||old?.id,aliases:old?.aliases||[],appearance:appearanceText(old?.appearance),place:'home',name:p.name,location:p.location,event_time:p.action==='correct'?old.event_time:p.event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'}];
     this.storage.setItem(this.key,JSON.stringify(next));
     this.pending=null;return this.result(p.action==='delete'?'已删除这件物品的本机记录。':'已保存你提供的位置，尚未确认现在的位置。');
   }

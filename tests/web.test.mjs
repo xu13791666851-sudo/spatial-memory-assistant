@@ -617,7 +617,7 @@ test('find dialogue retains target and uses fresh pictures across follow-ups wit
   const before=JSON.stringify(runtime.memory.rows());say(bridge,'我现在需要找玻璃杯');await finishPicture(bridge);
   assert.match(lastAnswer(events),/上次记录蓝色玻璃杯/);assert.match(lastAnswer(events),/可以把镜头对准/);
   result={...missingCup,next_step:{kind:'reframe',anchor:'木桌',question:'木桌右边没有拍全，可以把镜头稍微向右转吗？'}};
-  say(bridge,'已经对准了');await finishPicture(bridge);assert.match(lastAnswer(events),/右边没有拍全/);assert.doesNotMatch(lastAnswer(events),/上次记录/);
+  say(bridge,'已经对准了');await finishPicture(bridge);assert.match(lastAnswer(events),/右边没有拍全/);assert.match(lastAnswer(events),/上次记录蓝色玻璃杯在木桌上/);
   result=missingCup;say(bridge,'这里没有');await finishPicture(bridge);assert.match(lastAnswer(events),/后来有没有/);
   say(bridge,'可能拿到厨房了');assert.match(lastAnswer(events),/作为这次寻找的线索/);
   result=seenCup;say(bridge,'这样呢');await finishPicture(bridge);assert.match(lastAnswer(events),/符合.*玻璃杯/);assert.doesNotMatch(lastAnswer(events),/不能确认是同一件/);
@@ -1056,4 +1056,44 @@ test('fallback failure stops retrying and retains the camera and search target',
  const clock=searchClock(),sockets=[];let http=0;class Socket{constructor(){sockets.push(this);}close(){}}
  const {bridge,events}=visualFixture({visionStreamUrl:'wss://stream.test',WebSocket:Socket,searchClock:clock,fetch:async url=>url==='/api/vision'?(http++,new Response('failed',{status:503})):Response.json({configured:true,authenticated:true})});t.after(()=>bridge.close());
  say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);sockets[0].onerror();await settle();await clock.advance(1500);await finishPicture(bridge);sockets[1].onerror();await settle();await clock.advance(1);await finishPicture(bridge);assert.equal(http,1);assert.equal(bridge.search.state,'paused');assert.equal(bridge.search.task.target,'水杯');assert.ok(bridge.videoId);assert.ok(!events.some(e=>e.type==='app.video_error'));await clock.advance(60000);assert.equal(http,1);
+});
+
+test('specific headphone recall wins over a legacy generic record for typed and spoken lost-item questions',async t=>{
+ for(const input of ['typed','spoken']){
+  const data=storage();data.setItem('spatial-memory.records.v1',JSON.stringify([
+   {id:'generic',name:'耳机',location:'桌面上，键盘右侧、笔记本电脑左侧之间',recorded_at:'2026-10-20T07:00:00Z',source:'USER_REQUESTED_VISUAL',state:'HISTORICAL'},
+   {id:'white',name:'白色耳机',location:'桌面黑色键盘右侧',appearance:'白色椭圆形耳机充电盒',recorded_at:'2026-10-20T07:09:00Z',source:'USER_REQUESTED_VISUAL',state:'HISTORICAL'}
+  ]));
+  let observations=0;const f=visualFixture({storage:data,fetch:async url=>{if(url==='/api/vision')observations++;return Response.json({configured:true,authenticated:true});}});t.after(()=>f.bridge.close());f.runtime.setPlace('home');
+  const before=data.getItem('spatial-memory.records.v1');
+  for(const text of ['我的白色耳机在哪','我找不到我的白色耳机了，帮我找一下在哪里','我找不着白色耳机了','我的物品在哪']){
+   if(input==='spoken')say(f.bridge,text);else f.bridge.send(JSON.stringify({type:'text',text}));
+   assert.match(lastAnswer(f.events),/白色耳机在桌面黑色键盘右侧/,text);assert.doesNotMatch(lastAnswer(f.events),/多条|可能|你要找哪一个|抽屉|显示器/);assert.equal(f.events.at(-1).source,'history');
+  }
+  assert.equal(observations,0);assert.equal(f.sent.filter(e=>e.type==='response.create').length,0);assert.equal(data.getItem('spatial-memory.records.v1'),before);
+  say(f.bridge,'帮我寻找白色耳机');assert.equal(f.bridge.search.state,'searching');assert.match(lastAnswer(f.events),/上次记录在桌面黑色键盘右侧/);assert.equal(f.bridge.search.task.reference_appearance,'白色椭圆形耳机充电盒');
+ }
+});
+
+test('remembering a sole object by its short name updates its identity and latest location across reload and deletion',()=>{
+ const data=storage(),m=new Memory(data);m.saveVisual('白色耳机',{...candidate,appearance:'白色椭圆形充电盒'});const id=m.get('白色耳机').object_id;
+ m.saveVisual('耳机',{...candidate,anchor:'键盘',location:'桌面黑色键盘右侧',appearance:'白色椭圆形充电盒'});
+ const reloaded=new Memory(data);assert.equal(reloaded.all().length,1);assert.equal(reloaded.get('耳机').object_id,id);assert.equal(reloaded.get('白色耳机').location,'桌面黑色键盘右侧');
+ reloaded.remember('记住，耳机放在玄关桌上');assert.equal(reloaded.get('白色耳机').location,'玄关桌上');assert.equal(reloaded.all().length,1);assert.doesNotMatch(reloaded.answer('白色耳机'),/键盘右侧|可能/);
+ reloaded.prepare({action:'delete',name:'耳机'});reloaded.confirm(reloaded.pending.token);assert.equal(new Memory(data).all().length,0);
+});
+
+test('adding a more specific name keeps one object while genuinely different colors remain separate',()=>{
+ const data=storage(),m=new Memory(data);m.saveVisual('耳机',{...candidate,appearance:'白色椭圆形充电盒'});const id=m.get('耳机').object_id;assert.equal(m.get('黑色耳机'),null);
+ m.saveVisual('白色耳机',{...candidate,anchor:'键盘',location:'键盘右侧',appearance:'白色椭圆形充电盒'});
+ assert.equal(m.all().length,1);assert.equal(m.get('白色耳机').object_id,id);assert.equal(m.get('耳机').location,'键盘右侧');
+ m.saveVisual('黑色耳机',{...candidate,appearance:'黑色方形充电盒'});assert.equal(m.all().length,2);assert.notEqual(m.get('黑色耳机').object_id,id);assert.equal(m.get('白色耳机').location,'键盘右侧');assert.equal(m.get('耳机'),null);
+ const other=new Memory(storage());other.saveVisual('白色耳机',{...candidate,appearance:'白色充电盒'});other.saveVisual('耳机',{...candidate,appearance:'黑色充电盒'});assert.equal(other.all().length,2);
+});
+
+test('missing current view always reads the selected history and never suggests model-invented hiding places',async t=>{
+ const f=visualFixture({fetch:async url=>Response.json(url==='/api/vision'?{...missingCup,answer:'没有看到耳机，可能在显示器后面或抽屉里。'}:{configured:true,authenticated:true})});t.after(()=>f.bridge.close());f.runtime.setPlace('home');f.runtime.memory.remember('记住，白色耳机放在黑色键盘右侧');
+ const before=f.data.getItem('spatial-memory.records.v1');
+ for(const text of ['白色耳机现在在哪里','这样呢']){say(f.bridge,text);await finishPicture(f.bridge);assert.match(lastAnswer(f.events),/^你上次记录白色耳机在黑色键盘右侧/);assert.match(lastAnswer(f.events),/当前画面没有看到/);assert.doesNotMatch(lastAnswer(f.events),/可能|显示器后面|抽屉/);}
+ assert.equal(f.data.getItem('spatial-memory.records.v1'),before);
 });
