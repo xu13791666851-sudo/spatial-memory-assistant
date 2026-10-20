@@ -40,11 +40,13 @@ export class ContinuousSearch{
   }
   connected(){if(this.running&&!this.fallback&&this.notice){this.notice='';this.publish();}}
   requested(){this.lastRequest=this.clock();}
-  accept(result,frameStatus){
+  accept(result,frameStatus,{stableCandidate=false}={}){
     const match=frameStatus==='clear'&&result.target_visible===true&&
       (!this.task.reference_appearance||result.appearance_match?.status==='match');
     this.hits=match?this.hits+1:0;
-    if(this.hits>=2){this.clearTimer(this.expiry);this.state='found';this.publish();return true;}
+    // Two stable local views plus this cloud-verified frame replace the second
+    // cloud round. Local detections alone can never declare a target found.
+    if(this.hits>=2||(match&&stableCandidate)){this.clearTimer(this.expiry);this.state='found';this.publish();return true;}
     this.state=match?'confirming':'searching';this.publish();this.schedule();return false;
   }
   pause(notice=''){if(!this.running)return;this.notice=notice;this.clearTimer(this.timer);this.clearTimer(this.expiry);this.hits=0;this.state='paused';this.publish();}

@@ -3,6 +3,7 @@ import {applyUnifiedLayout} from './unified-layout.mjs';
 import {applyRetroLayout} from './retro-layout.mjs';
 import {applySceneInputLayout} from './scene-input-layout.mjs';
 import {colors,frameSvg,icon} from '../web/retro-design.mjs';
+import {buildYoloAssets} from './build-yolo-assets.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 const root=process.cwd(),dist=path.join(root,'dist');
@@ -198,4 +199,5 @@ await fs.copyFile(path.join(root,'netlify/preview-headers'),path.join(dist,'_hea
 await fs.writeFile(path.join(dist,'_redirects'),'/memory /video/ 301!\n/ /video/ 302!\n');
 await fs.appendFile(path.join(dist,'static/style.css'),'\nbody[data-page=assistant] main{padding-bottom:calc(32px + env(safe-area-inset-bottom))}body[data-page=assistant] .notice{bottom:calc(20px + env(safe-area-inset-bottom))}body[data-page=assistant] .session p[role=status]:empty{display:none}\n');
 await fs.appendFile(path.join(dist,'static/style.css'),'.place-control{margin:12px 0 18px}.place-control label{display:block;font-weight:700;margin-bottom:6px}.place-control select{width:100%;min-height:48px}.place-control p{margin:6px 0 0}\n');
+await buildYoloAssets();
 console.log('Netlify build ready: one assistant page with vision, voice and explicit memory commands.');

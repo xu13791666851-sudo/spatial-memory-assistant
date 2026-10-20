@@ -10,7 +10,10 @@
     "deploy:cloudflare": "wrangler deploy",
     "test:cloudflare": "node --test tests/cloudflare.test.mjs tests/pages-entry.test.mjs",
     "build:pages-entry": "node scripts/build-pages-entry.mjs",
-    "deploy:pages-entry": "npm run build:pages-entry && wrangler pages deploy --cwd cloudflare/pages --project-name i-see-you-spatial-memory --branch main"
+    "deploy:pages-entry": "npm run build:pages-entry && wrangler pages deploy --cwd cloudflare/pages --project-name i-see-you-spatial-memory --branch main",
+    "test:yolo": "node --test tests/yolo.test.mjs",
+    "test:yolo:browser": "node tests/yolo-browser.cjs",
+    "deploy:yolo-preview": "wrangler deploy && npm run build:pages-entry && wrangler pages deploy --cwd cloudflare/yolo-pages --project-name i-see-you-yolo-preview --branch main"
   },
   "engines": {
     "node": ">=22"
@@ -19,6 +22,9 @@
     "wrangler": "4.151.1"
   },
   "dependencies": {
+    "@tensorflow/tfjs-backend-cpu": "4.9.0",
+    "@tensorflow/tfjs-core": "4.9.0",
+    "@tensorflow/tfjs-tflite": "0.0.1-alpha.10",
     "ws": "^8.22.0"
   }
 }

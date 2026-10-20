@@ -1,6 +1,7 @@
 import {VisionStream} from './vision-stream.mjs';
 import {VISION_STREAM_URL} from './vision-stream-config.mjs';
 import {ContinuousSearch,continuousTarget} from './continuous-search.mjs';
+import {LocalYolo} from './yolo-local.mjs';
 import {FindDialogue,searchTarget,locationQuery,asksCurrentView} from './find-dialogue.mjs';
 import {Memory,rememberCommand} from './memory.mjs';
 import {ObservationGate,asksHistory,currentViewIntent} from './interaction.mjs';
@@ -52,6 +53,7 @@ export function createRuntime(env){
       this.channels=new Set();this.calls=new Set();this.replayResponses=new Set();this.replayItems=new Set();this.requestController=new AbortController();this.mediaGeneration=0;this.videoId=null;
       this.scene=new (env.ObservationGate||ObservationGate)({requireTransmission:false,settleMs:100,pollMs:80});this.lastUserText='';this.sceneGoal='';this.lastObservedAt=null;this.replyPending=false;this.listening=false;activeBridge=this;
       this.audio=document.getElementById('remote-audio');
+      this.localYolo=env.localYoloFactory?env.localYoloFactory():new LocalYolo();
       this.search=new ContinuousSearch({...env.searchClock,
         observe:(goal,task)=>{
           if(this.closed||this.paused||document.hidden){this.search.pause();return true;}
@@ -165,6 +167,8 @@ export function createRuntime(env){
       if(msg.type==='resume'){this.paused=false;return;}
       if(msg.type==='video_start'&&hasVideo(this.mode)&&!this.paused){
         if(![10,30,60,120,300,600].includes(msg.duration)||this.videoId)return;
+        if(this.localYolo.closed)this.localYolo=env.localYoloFactory?env.localYoloFactory():new LocalYolo();
+        void this.localYolo.warm();
         this.videoId=msg.id;this.deadline=Date.now()+msg.duration*1000;this.frames=0;this.sceneGoal=this.observationCall?.goal||String(msg.goal||'').slice(0,300);if(this.sceneGoal&&context.recent.at(-1)!==this.sceneGoal)context.note(this.sceneGoal);this.userSpoke=false;
         const target=searchTarget(this.sceneGoal,dialogue.target);if(!this.sceneTask&&target&&hasMemory(this.mode)){dialogue.focus(target);dialogue.allowHistory=context.place==='home';this.sceneTask=dialogue.observation().task;}
         this.videoTimer=setTimeout(()=>this.endVideo('已到观察时长，摄像头已关闭。语音可以继续。'),msg.duration*1000);
@@ -253,7 +257,14 @@ export function createRuntime(env){
         if(stream)await stream.open(scene.controller.signal);
         if(this.closed||this.sceneCommit!==scene||this.paused)return;
         if(stream)this.search.connected();
-        const image=this.captureScene();scene.observedAt=new Date().toISOString();this.search.requested();
+        let image;
+        if(scene.task?.scanId&&this.localYolo.enabled){
+          const local=await this.localYolo.prepare({target:scene.task.target,capture:()=>this.captureScene(),signal:scene.controller.signal,
+            stillCurrent:()=>!this.closed&&!this.paused&&!document.hidden&&this.sceneCommit===scene&&this.videoId===scene.id&&this.mediaGeneration===scene.generation});
+          image=local.image;scene.stableCandidate=local.stableCandidate===true;this.lastLocalPerception=local.local;
+        }else image=this.captureScene();
+        if(this.closed||this.paused||this.sceneCommit!==scene||this.videoId!==scene.id||this.mediaGeneration!==scene.generation)return;
+        scene.observedAt=new Date().toISOString();this.search.requested();
         const deviceSpeech=!!document.getElementById('fast-describe')?.checked&&(env.supportsSpeech||document.getElementById('screen-reader-mode')?.checked);
         const requestId=crypto.randomUUID(),task=scene.task?{target:scene.task.target,remember:!!scene.task.saveToken,reference_appearance:scene.task.reference_appearance||'',...(scene.task.identify?{identify:true}:{})}:null;
         this.visualPending=true;this.suppressResponse=true;this.stopPlayback();
@@ -274,7 +285,7 @@ export function createRuntime(env){
         if(typeof result.answer!=='string'||!result.answer.trim())throw Error('当前画面未能理解。');
         if(scene.task?.scanId){
           if(scene.task.scanId!==this.search.id||!this.search.running)return;
-          if(!this.search.accept(result,payload.frame_status)){
+          if(!this.search.accept(result,payload.frame_status,{stableCandidate:scene.stableCandidate===true})){
             this.sceneCommit=null;this.visualPending=false;this.suppressResponse=false;this.updatePlayback();return;
           }
         }
@@ -493,6 +504,7 @@ export function createRuntime(env){
     }
     clearVideoTrack(){this.mediaGeneration++;this.videoTrack?.stop();this.videoTrack=null;this.videoSender?.replaceTrack(null).catch(()=>{});}
     endVideo(message){
+      this.localYolo.close();
       this.search.pause();
       if(this.sceneCommit){this.localSpeechToken=null;this.visualPending=false;this.suppressResponse=true;this.control({type:'response.cancel'});this.emit({type:'app.scene_cancel'});}
       dialogue.saving=null;this.sceneTask=null;
@@ -504,6 +516,7 @@ export function createRuntime(env){
     stopPlayback(){this.audio.muted=true;}
     updatePlayback(){this.audio.muted=this.paused||this.visualPending||this.awaitingTranscript||!!document.getElementById('screen-reader-mode')?.checked;}
     close(){
+      this.localYolo.close();
       if(this.closed)return;this.search.stop();dialogue.saving=null;this.closed=true;this.localSpeechToken=null;this.readyState=3;this.requestController.abort();clearTimeout(this.sessionTimer);clearTimeout(this.videoTimer);clearTimeout(this.photoTimer);clearTimeout(this.sceneInstructionTimer);this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.pendingInstructions=false;this.scene.stop();this.queuedReply=null;this.observationCall=null;this.clearVideoTrack();
       for(const c of this.channels){try{c.close();}catch{}}
       this.pc?.close();this.audio.pause();this.audio.srcObject=null;this.audio.hidden=true;
@@ -511,7 +524,7 @@ export function createRuntime(env){
       queueMicrotask(()=>this.onclose?.());
     }
   }
-  return {loaded:loadAccess(),Bridge,memory,taskState:()=>({...dialogue.summary(),search:activeBridge?.search.snapshot()||null}),place:()=>context.place,setPlace,status:()=>({token:'browser-local',configured:!!settings.configured&&!!settings.authenticated,fixedKey:true,serverConfigured:!!settings.configured,workspace:'',region:'beijing',place:context.place}),
+  return {loaded:loadAccess(),Bridge,memory,perceptionState:()=>activeBridge?.lastLocalPerception||null,taskState:()=>({...dialogue.summary(),search:activeBridge?.search.snapshot()||null}),place:()=>context.place,setPlace,status:()=>({token:'browser-local',configured:!!settings.configured&&!!settings.authenticated,fixedKey:true,serverConfigured:!!settings.configured,workspace:'',region:'beijing',place:context.place}),
     async api(path,body,method='POST'){
       if(path==='/api/config'){
         const response=await fetcher('/api/access',{cache:'no-store'});

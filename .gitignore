@@ -23,6 +23,7 @@
 /.netlify/
 /.wrangler/
 /.pages-entry/
+/output/
 .dev.vars
 .dev.vars.*
 
