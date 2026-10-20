@@ -33,7 +33,7 @@ await page.route('**/*',async route=>{
 });
 await page.goto('https://ui.test/');await page.waitForFunction(()=>window.genericTest);
 await page.evaluate(()=>{document.getElementById('screen-reader-mode').checked=true;const r=window.genericTest.runtime;r.setPlace('home');r.memory.remember('记住，旧物品放在柜子里');});
-await page.getByRole('button',{name:'开启摄像头和语音对话',exact:true}).click();await page.waitForFunction(()=>window.genericTest.bridge()?.configured);await page.waitForFunction(()=>document.querySelector('#chat').textContent.includes('你好，我是小忆'));
+await page.getByRole('button',{name:'开始',exact:true}).click();await page.waitForFunction(()=>window.genericTest.bridge()?.configured);await page.waitForFunction(()=>document.querySelector('#chat').textContent.includes('你好，我是小忆'));
 await page.evaluate(()=>window.genericTest.sendText('旧物品在哪里'));
 const before=await page.evaluate(()=>localStorage.getItem('spatial-memory.records.v1'));
 await page.evaluate(()=>window.genericTest.sendText('帮我记住这个物品'));
@@ -48,7 +48,7 @@ const id=await page.evaluate(()=>window.genericTest.runtime.memory.get('紫色�
 await page.evaluate(()=>window.genericTest.sendText('重新记住它的位置'));
 await page.waitForFunction(()=>window.genericTest.runtime.memory.get('紫色拉链收纳袋').location==='木桌另一端，台灯旁');
 assert.equal(await page.evaluate(()=>window.genericTest.runtime.memory.get('紫色拉链收纳袋').object_id),id);
-await page.click('#end-conversation');await page.reload();await page.waitForFunction(()=>window.genericTest);await page.selectOption('#place-mode','home');
+await page.click('#main-toggle');await page.reload();await page.waitForFunction(()=>window.genericTest);await page.evaluate(()=>window.spatialRuntime.setPlace('home'));
 await page.evaluate(()=>window.genericTest.sendText('紫色拉链收纳袋在哪'));assert.match(await page.locator('#chat .chat-turn').last().innerText(),/木桌另一端，台灯旁/);assert.equal(vision,3);assert.deepEqual(errors,[]);
 console.log('PASS generic memory: unnamed object, ambiguity and descriptive selection, preserved previous item, identified name, location update and reload recall');
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

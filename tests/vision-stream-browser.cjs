@@ -37,23 +37,23 @@ await page.route('**/*',async route=>{
 });
 await page.goto('https://ui.test/');await page.waitForFunction(()=>window.searchTest);
 await page.evaluate(()=>{document.getElementById('screen-reader-mode').checked=true;const r=window.searchTest.runtime;r.setPlace('home');r.memory.saveVisual('绿色水杯',{unique:true,location_supported:true,anchor:'木桌',location:'木桌上，电脑左侧',appearance:'绿色杯身，有白色杯盖'},new Date().toISOString());});
-await page.getByRole('button',{name:'开启摄像头和语音对话',exact:true}).click();await page.waitForFunction(()=>window.searchTest.bridge()?.configured);
+await page.getByRole('button',{name:'开始',exact:true}).click();await page.waitForFunction(()=>window.searchTest.bridge()?.configured);
 await page.waitForFunction(()=>document.querySelector('#chat').textContent.includes('你好，我是小忆'));
 const before=await page.evaluate(()=>localStorage.getItem('spatial-memory.records.v1'));
 await page.evaluate(()=>window.searchTest.sendText('绿色水杯上次放在哪里'));assert.equal(await page.evaluate(()=>window.streamFrames.length),0);assert.match(await page.locator('#latest-answer').innerText(),/木桌上/);
 await page.evaluate(()=>window.searchTest.sendText('帮我找绿色水杯'));
-await page.getByRole('button',{name:'暂停寻找',exact:true}).waitFor({state:'visible',timeout:5000});
+await page.waitForFunction(()=>!document.getElementById('search-controls').hidden,{},{timeout:5000});
 await page.waitForFunction(()=>window.searchTest.runtime.taskState().search.state==='confirming',{},{timeout:30000});
 assert.equal(await page.evaluate(()=>window.streamFrames.length),2);assert.match(await page.locator('#search-status').innerText(),/保持镜头稳定/);
 await page.waitForFunction(()=>window.searchTest.runtime.taskState().search.state==='found',{},{timeout:20000});
 assert.equal(await page.evaluate(()=>window.streamFrames.length),3);assert.equal(await page.evaluate(()=>window.streamSockets.length),1);assert.equal(await page.evaluate(()=>window.streamSockets[0].closed),true);assert.equal(await page.evaluate(()=>new Set(window.streamFrames.map(r=>r.image)).size),3);assert.ok(await page.evaluate(()=>window.streamFrames.every(r=>r.task.remember===false&&r.task.reference_appearance==='绿色杯身，有白色杯盖')));assert.match(await page.locator('#latest-answer').innerText(),/找到了绿色水杯/);assert.equal(await page.locator('#search-controls').isVisible(),false);
 assert.equal(await page.evaluate(()=>localStorage.getItem('spatial-memory.records.v1')),before);
-await page.evaluate(()=>window.searchTest.sendText('帮我找绿色水杯'));await page.getByRole('button',{name:'暂停寻找',exact:true}).click();
+await page.evaluate(()=>window.searchTest.sendText('帮我找绿色水杯'));await page.evaluate(()=>window.searchTest.sendText('暂停寻找'));
 assert.equal(await page.evaluate(()=>window.searchTest.runtime.taskState().search.state),'paused');assert.equal(await page.evaluate(()=>window.streamFrames.length),3);
-await page.getByRole('button',{name:'继续寻找',exact:true}).click();assert.equal(await page.evaluate(()=>window.searchTest.runtime.taskState().search.state),'searching');
-for(const size of [{width:320,height:568},{width:390,height:844}]){await page.setViewportSize(size);const b=await page.locator('#search-cancel').boundingBox();assert.ok(b.x>=0&&b.y>=0&&b.x+b.width<=size.width&&b.y+b.height<=size.height,JSON.stringify(b));}
-await page.getByRole('button',{name:'取消寻找',exact:true}).click();assert.equal(await page.evaluate(()=>window.searchTest.runtime.taskState().search.state),'idle');assert.equal(await page.locator('#search-controls').isVisible(),false);
+await page.evaluate(()=>window.searchTest.sendText('继续找'));assert.equal(await page.evaluate(()=>window.searchTest.runtime.taskState().search.state),'searching');
+for(const size of [{width:320,height:568},{width:390,height:844}]){await page.setViewportSize(size);await page.waitForFunction(()=>document.getElementById('main-toggle').getBoundingClientRect().bottom<=innerHeight);const b=await page.locator('#main-toggle').boundingBox();assert.ok(b.x>=0&&b.y>=0&&b.x+b.width<=size.width&&b.y+b.height<=size.height,JSON.stringify(b));}
+await page.evaluate(()=>window.searchTest.sendText('停止找物'));assert.equal(await page.evaluate(()=>window.searchTest.runtime.taskState().search.state),'idle');assert.equal(await page.locator('#search-controls').isVisible(),false);
 assert.equal(await page.evaluate(()=>window.searchTest.bridge().videoTrack.readyState==='live'),true);
-await page.click('#end-conversation');assert.deepEqual(errors,[]);
+if(await page.locator('#records-dialog').isVisible())await page.click('#close-records');await page.click('#main-toggle');assert.deepEqual(errors,[]);
 console.log('PASS phase two: generated mobile page uses one persistent socket for fresh missing/seen/confirmed frames, closes on found, memory unchanged and pause/resume/cancel work');
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
