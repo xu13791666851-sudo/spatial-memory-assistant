@@ -101,7 +101,7 @@ export class Memory {
     const p=this.pending;
     if(!p||p.token!==token||p.expires<=this.clock()){this.pending=null;throw Error('待确认操作已失效，请重新说明。');}
     if(cancel){this.pending=null;return this.result('已取消。');}
-    const rows=this.rows();const old=this.get(p.name);
+    const rows=this.rows();const old=this.all().find(r=>normalizeName(r.name)===normalizeName(p.name));
     const next=p.action==='delete'?rows.filter(r=>normalizeName(r.name)!==normalizeName(p.name)):[...rows,{id:this.uuid(),object_id:old?.object_id||old?.id,appearance:appearanceText(old?.appearance),place:'home',name:p.name,location:p.location,event_time:p.action==='correct'?old.event_time:p.event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'}];
     this.storage.setItem(this.key,JSON.stringify(next));
     this.pending=null;return this.result(p.action==='delete'?'已删除这件物品的本机记录。':'已保存你提供的位置，尚未确认现在的位置。');

@@ -931,3 +931,9 @@ test('explicit placement changes preserve recorded appearance; a new authorized 
  m.saveVisual('水杯',{...candidate,appearance:''});assert.equal(m.get('水杯').appearance,appearance);
  m.saveVisual('水杯',{...candidate,appearance:'浅绿色杯身，杯盖已取下'});assert.equal(new Memory(data).get('水杯').appearance,'浅绿色杯身，杯盖已取下');assert.equal(m.get('水杯').object_id,id);
 });
+
+test('a newly named manual record does not inherit a loosely matched objects appearance',()=>{
+ const m=new Memory(storage());m.saveVisual('绿色水杯',{...candidate,appearance:'浅绿色杯身，有把手'});
+ m.prepare({action:'record',name:'水杯',location:'厨房桌上'});m.confirm(m.pending.token);
+ const created=m.all().find(r=>r.name==='水杯');assert.equal(created.appearance,'');assert.equal(created.object_id,undefined);
+});
