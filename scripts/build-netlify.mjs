@@ -192,6 +192,14 @@ await fs.writeFile(path.join(dist,'index.html'),html);
 for(const alias of ['video','memory']){
   await fs.mkdir(path.join(dist,alias),{recursive:true});await fs.writeFile(path.join(dist,alias,'index.html'),html);
 }
+// Refresh published headers on every build; a cached Cloudflare _headers file
+// otherwise takes precedence over the Netlify project configuration.
+const config=await fs.readFile(path.join(root,'netlify.toml'),'utf8');
+const headerBlock=config.match(/\[headers.values\]([\s\S]*?)(?=\n\[|$)/)?.[1];
+if(!headerBlock)throw Error('Netlify response headers missing');
+const headers=[...headerBlock.matchAll(/^\s*([A-Za-z][A-Za-z-]*)\s*=\s*("[^"\n]*")\s*$/gm)].map(([,name,value])=>'  '+name+': '+JSON.parse(value));
+if(!headers.some(line=>line.startsWith('  Content-Security-Policy:')))throw Error('Netlify CSP missing');
+await fs.writeFile(path.join(dist,'_headers'),'/*\n'+headers.join('\n')+'\n');
 // Include routing rules in the published directory as well as project config.
 await fs.writeFile(path.join(dist,'_redirects'),'/memory /video/ 301!\n/ /video/ 302!\n');
 await fs.appendFile(path.join(dist,'static/style.css'),'\nbody[data-page=assistant] main{padding-bottom:calc(32px + env(safe-area-inset-bottom))}body[data-page=assistant] .notice{bottom:calc(20px + env(safe-area-inset-bottom))}body[data-page=assistant] .session p[role=status]:empty{display:none}\n');
