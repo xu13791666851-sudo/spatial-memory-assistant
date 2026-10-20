@@ -5,7 +5,7 @@ const clean=(value,max=120)=>{
   return value;
 };
 export const normalizeName=value=>String(value||'').trim().replace(/[，。！？!?,]+$/,'').replace(/^(?:这个|那个|这只|那只|这一个|那一个|一个|一只)(?:的)?/,'').trim();
-const canonical=value=>normalizeName(value).replace(/玻璃杯|水杯/g,'杯子').replace(/杯$/,'杯子').replace(/的/g,'');
+const canonical=value=>normalizeName(value).replace(/^我的/,'').replace(/玻璃杯|水杯/g,'杯子').replace(/杯$/,'杯子').replace(/的/g,'');
 export const sameType=(a,b)=>{
   a=canonical(a);b=canonical(b);
   return !!a&&!!b&&(a===b||a.endsWith(b)||b.endsWith(a));

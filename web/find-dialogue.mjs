@@ -1,6 +1,34 @@
 import {normalizeName,sameType,rememberCommand,requestText,VisualEvidenceError,MemoryPersistenceError} from './memory.mjs';
+import {asksHistory} from './interaction.mjs';
 
 const clean=text=>String(text||'').trim().replace(/^(?:你好)?(?:小忆|小意|小易)[，,\s]*/,'').replace(/[。！？!?]+$/,'');
+const pronoun=name=>/^(?:我|它|他|她|这个|那个|这件|那件|这个物品|那个东西)?$/.test(name);
+export const asksCurrentView=text=>!asksHistory(text)&&/(?:现在|当前|眼前|画面|镜头|这里|这边|再看|拍到|照到|对准)/.test(text);
+// Parse the location question before the generic “看看…” search command. Scan
+// every clause: conversational preambles must not hide the actual query.
+export function locationQuery(text,focus=''){
+  const clauses=clean(text).split(/[，,；;。！？!?]|(?=(?:你)?帮我)/).filter(Boolean);
+  let implicit=null;
+  for(const clause of clauses){
+    let value=requestText(clause.trim())
+      .replace(/^(?:我)?(?:现在)?(?:想要|想|需要|要)(?:知道|查一下|查询|问一下|问问)/,'')
+      .replace(/^(?:你)?(?:还)?(?:记不记得|记得)/,'')
+      .replace(/^(?:我)?(?:不记得|记不得|记不清|想不起来|忘记了?|忘了)/,'')
+      .replace(/^(?:查(?:看|询)?(?:一下)?|看看|看一下|告诉我|说一下)/,'');
+    const match=value.match(/^(.*?)(?:放(?:在|到)?(?:了)?(?:哪里|哪儿|哪)|在(?:哪里|哪儿|哪)|(?:的)?(?:具体)?位置)(?:了|呢|吗|呀|啊|来着|在哪里|在哪儿|在哪)*$/)
+      ||value.match(/^(?:我)?(?:把)?(.*?)(?:放哪了)$/);
+    if(!match)continue;
+    let name=match[1]
+      .replace(/^(?:(?:我)?(?:刚才|刚刚|之前|上次|以前|昨天)(?:让你|请你|帮我)?(?:记住|记录)(?:的)?)/,'')
+      .replace(/^(?:(?:我的|我|把)|(?:刚才|刚刚|之前|上次|以前|昨天|现在)(?:记录的)?)+/,'')
+      .replace(/(?:刚才|刚刚|之前|上次|以前|昨天|现在|的)+$/,'');
+    name=normalizeName(name);
+    if(pronoun(name)){implicit={target:focus,implicit:true};continue;}
+    // Do not turn a whole unparsed sentence into a supposedly missing item.
+    if(name.length<=60&&!/(?:哪里|在哪|帮我|记得|知道|告诉|看看|找|需要|想要)/.test(name))return {target:name,implicit:false};
+  }
+  return implicit;
+}
 export function visualRememberIntent(text,focus=''){
   const value=requestText(clean(text));
   if(rememberCommand(value))return null;
@@ -11,6 +39,8 @@ export function visualRememberIntent(text,focus=''){
   return {name:/^(它|他|她|这个|那个|物品|东西)$/.test(name)?focus:name};
 }
 export function searchTarget(text,focus=''){
+  const location=locationQuery(text,focus);
+  if(location)return location.target;
   // A spoken request can include a second clause explaining how to look.
   const value=requestText(clean(text)).split(/[，,；;。]/)[0]
     .replace(/^我(?:现在)?(?:需要|想要|想)(?:要)?/,'');
@@ -64,15 +94,21 @@ export class FindDialogue{
       const value=clean(text),matches=this.choices.filter(r=>value.includes(r.name)||[r.name,r.location].some(s=>s.includes(value.replace(/^(?:是|要)/,'').replace(/(?:的)?(?:那个|那只|那一个)$/,''))));
       if(matches.length===1){this.choices=[];this.focus(matches[0].name);this.misses=1;this.objectId=matches[0].object_id||matches[0].id;return {kind:'answer',history:true,answer:this.memory.answer(matches[0].name)+' 可以把镜头对准记录的位置吗？'};}
     }
-    const target=searchTarget(text,this.target);
+    const history=asksHistory(text);
+    const query=locationQuery(text,this.target||((place==='home'||history)?this.memory.last:''));
+    if(query?.implicit&&!query.target){
+      const records=history||place==='home'?this.memory.all():[];
+      if(records.length===1)query.target=records[0].name;
+      else return {kind:'answer',answer:records.length?'你想查哪件物品上次的位置？已记录：'+records.map(r=>r.name).join('、')+'。':'你想找哪件物品？请说一下物品名称。'};
+    }
+    const target=query?.target||searchTarget(text,this.target);
     if(target){
       this.focus(target);
-      const history=/(之前|上次|以前|记住|记录|放哪了)/.test(text);
       this.allowHistory=place==='home'||history;
-      if(history||(place==='home'&&!/现在|眼前|画面/.test(text)&&!/^(?:我(?:现在)?(?:需要|想要|想)(?:要)?)?(?:找|寻找|看看)/.test(requestText(clean(text))))){
+      if(history||(place==='home'&&!asksCurrentView(text)&&(query||this.memory.find(target).length))){
         const records=this.memory.find(target);this.choices=records.length>1?records:[];
-        if(records.length===1){this.focus(records[0].name);this.objectId=records[0].object_id||records[0].id;this.misses=1;}
-        const question=records.length===1?'可以把镜头对准记录的位置吗？':records.length===0?'你最后一次使用它是在什么地方？':'';
+        if(records.length===1){if(records[0].name.length>=target.length)this.focus(records[0].name);this.objectId=records[0].object_id||records[0].id;this.misses=1;}
+        const question=records.length===1?'需要确认现在是否还在那里时，可以把镜头对准记录的位置，再说“这样呢”。':records.length===0?'你最后一次使用它是在什么地方？':'';
         this.lastQuestion=question;
         return {kind:'answer',history:records.length>0,answer:this.memory.answer(target)+(question?' '+question:'')};
       }

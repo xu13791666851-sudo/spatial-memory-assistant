@@ -36,7 +36,7 @@ js=js.replaceAll('请先在设置里填写密钥并保存连接。','后台连�
 js=js.replace("configured?'连接已设置。':'连接尚未设置，填写密钥后保存。'", "configured?'连接已就绪，无须登录，点击开始对话即可。':'后台连接暂不可用，请点击检查连接；若仍未就绪，请联系管理员。'");
 js=js.replace("if(id==='screen-reader-mode'&&$(id).checked)stopPlayback();", "if(id==='screen-reader-mode')socket?.updatePlayback?.();if(id==='screen-reader-mode'&&$(id).checked)stopPlayback();");
 js=js.replace("case 'app.error':", "case 'app.audio_blocked':notify(event.message,0);break;\n case 'app.error':");
-js=js.replace("width:{ideal:640},height:{ideal:480},facingMode", "width:{ideal:640,max:640},height:{ideal:480,max:640},frameRate:{ideal:24,max:30},facingMode");
+js=js.replace("width:{ideal:640},height:{ideal:480},facingMode", "width:{ideal:1280,max:1920},height:{ideal:720,max:1080},frameRate:{ideal:24,max:30},facingMode");
 js=js.replace("const image=captureFrame();if(!image)return false;wsSend({type:'video_frame',id:videoId,image});return true;", "wsSend({type:'video_tick',id:videoId});return true;");
 js=js.replaceAll('已发送 0 张画面。','已观察 0 秒。').replaceAll('已发送 ${event.frames} 张画面。','已观察 ${event.frames} 秒。').replaceAll('本次已发送 ${event.frames} 张画面。','本次已观察 ${event.frames} 秒。');
 js=js.replace("async function navigateToPage(url){await stop();location.assign(url);}",`async function navigateToPage(url,push=true){

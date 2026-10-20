@@ -434,7 +434,7 @@ test('failed observation never announces a successful description',async()=>{
 
 test('current visual location never exposes historical records, explicit history still works',()=>{
   const {runtime,bridge,sent}=visualFixture({place:'home'});runtime.memory.prepare({action:'record',name:'水杯',location:'以前的柜子'});runtime.memory.confirm(runtime.memory.pending.token);
-  bridge.videoId='live-view';bridge.lastUserText='水杯在哪里';toolCall(bridge,'query_memory',{name:'水杯'},'current');
+  bridge.videoId='live-view';bridge.lastUserText='水杯现在在哪里';toolCall(bridge,'query_memory',{name:'水杯'},'current');
   const current=JSON.parse(sent.find(e=>e.item?.call_id==='current').item.output);assert.equal(current.use_current_view,true);assert.equal(current.record,undefined);
   bridge.videoId=null;bridge.lastUserText='水杯现在在哪里';toolCall(bridge,'query_memory',{name:'水杯'},'closed-view');
   assert.equal(JSON.parse(sent.find(e=>e.item?.call_id==='closed-view').item.output).requires_observation,true);
@@ -445,7 +445,7 @@ test('home search adds a labeled historical hint only when the target is clearly
   const fetcher=async url=>url==='/api/vision'?Response.json({answer:'当前画面没有看到钥匙。',objects:[],target_visible:false}):Response.json({configured:true,authenticated:true});
   const {runtime,bridge,events}=visualFixture({fetch:fetcher});runtime.setPlace('home');
   runtime.memory.prepare({action:'record',name:'钥匙',location:'玄关桌上'});runtime.memory.confirm(runtime.memory.pending.token);
-  bridge.send(JSON.stringify({type:'text',text:'找钥匙'}));
+  bridge.send(JSON.stringify({type:'text',text:'我现在需要找钥匙'}));
   bridge.send(JSON.stringify({type:'video_start',id:'home-key',duration:30,goal:'找钥匙'}));await settle();bridge.scene.config.onReady();await settle();
   const answer=events.find(e=>e.type==='app.scene_fallback')?.answer||'';
   assert.match(answer,/当前画面没有看到钥匙/);assert.match(answer,/上次记录钥匙在玄关桌上/);assert.match(answer,/不能确认/);
@@ -614,7 +614,7 @@ test('find dialogue retains target and uses fresh pictures across follow-ups wit
     if(url==='/api/vision'){targets.push(JSON.parse(opts.body).task.target);return Response.json(result);}
     return Response.json({configured:true,authenticated:true});
   }});t.after(()=>bridge.close());runtime.setPlace('home');runtime.memory.remember('记住，蓝色玻璃杯放在木桌上，纸巾盒旁边');
-  const before=JSON.stringify(runtime.memory.rows());say(bridge,'帮我找玻璃杯');await finishPicture(bridge);
+  const before=JSON.stringify(runtime.memory.rows());say(bridge,'我现在需要找玻璃杯');await finishPicture(bridge);
   assert.match(lastAnswer(events),/上次记录蓝色玻璃杯/);assert.match(lastAnswer(events),/可以把镜头对准/);
   result={...missingCup,next_step:{kind:'reframe',anchor:'木桌',question:'木桌右边没有拍全，可以把镜头稍微向右转吗？'}};
   say(bridge,'已经对准了');await finishPicture(bridge);assert.match(lastAnswer(events),/右边没有拍全/);assert.doesNotMatch(lastAnswer(events),/上次记录/);
@@ -828,4 +828,61 @@ test('storage write failures name the actual item and never blame the remember c
 test('generic this item asks for identity when there is no active target',async()=>{
  const {FindDialogue}=await import('../web/find-dialogue.mjs');const memory=new Memory(storage()),dialogue=new FindDialogue(memory);
  assert.match(dialogue.intent('帮我记住这个物品的位置','home').answer,/物品名称/);assert.equal(dialogue.saving,null);
+});
+
+test('saved paper cup is recalled from natural typed and spoken questions without a camera or provider call',async t=>{
+ for(const input of ['typed','spoken']){
+  let visionCalls=0;
+  const f=visualFixture({fetch:async url=>{if(url==='/api/vision'){visionCalls++;return Response.json({...seenCup,answer:'白色纸杯在木桌上，纸巾盒旁边。'});}return Response.json({configured:true,authenticated:true});}});
+  const {runtime,bridge,events,sent,data}=f;t.after(()=>bridge.close());runtime.setPlace('home');
+  const speak=text=>input==='spoken'?say(bridge,text):bridge.send(JSON.stringify({type:'text',text}));
+  speak('请帮我记住纸杯的位置');await finishPicture(bridge);assert.equal(runtime.memory.get('纸杯').location,candidate.location);
+  bridge.endVideo('摄像头关闭');const saved=data.getItem('spatial-memory.records.v1');
+  for(const phrase of ['我不记得放哪里了，你帮我看看之前我放在哪里了','你帮我看看之前我把纸杯放在哪里了','白色纸杯上次放在哪里','我想知道纸杯的位置','帮我找纸杯','它在哪里','我忘了把纸杯放哪了']){
+   speak(phrase);assert.match(lastAnswer(events),/纸杯在木桌上，纸巾盒旁边/,phrase);
+   assert.match(lastAnswer(events),/还没有确认现在的位置/);assert.equal(events.at(-1).source,'history');
+  }
+  assert.equal(visionCalls,1);assert.equal(sent.filter(e=>e.type==='response.create').length,0);assert.equal(data.getItem('spatial-memory.records.v1'),saved);
+  const reloaded=runtimeFixture({storage:data}).runtime;
+  const result=await reloaded.api('/api/command',{text:'你帮我看看之前我把纸杯放在哪里了'});
+  assert.match(result.answer,/纸杯在木桌上，纸巾盒旁边/);assert.equal(result.source,'history');
+ }
+});
+
+test('implicit recall after reload uses a sole record, asks among multiple records and never substitutes an unknown named item',async()=>{
+ const {FindDialogue}=await import('../web/find-dialogue.mjs');const data=storage(),memory=new Memory(data);
+ memory.remember('记住，纸杯放在书桌旁边');let dialogue=new FindDialogue(new Memory(data));
+ assert.match(dialogue.intent('我不记得放哪里了，你帮我看看之前我放在哪里了','home').answer,/纸杯在书桌旁边/);
+ memory.remember('记住，钥匙放在抽屉');dialogue=new FindDialogue(new Memory(data));
+ const ambiguous=dialogue.intent('我忘了放哪里了','home');assert.match(ambiguous.answer,/哪件物品/);assert.match(ambiguous.answer,/纸杯、钥匙|钥匙、纸杯/);
+ dialogue.focus('纸杯');assert.match(dialogue.intent('我的耳机之前放在哪里','home').answer,/没有找到耳机/);
+ assert.equal(dialogue.intent('今天的天气怎么样','home'),null);
+});
+
+test('history survives current-view misses and uncertainty, and current confirmation always requests new evidence',async t=>{
+ let result=missingCup,calls=0;const {runtime,bridge,events}=visualFixture({fetch:async url=>{if(url==='/api/vision'){calls++;return Response.json(result);}return Response.json({configured:true,authenticated:true});}});t.after(()=>bridge.close());
+ runtime.setPlace('home');runtime.memory.remember('记住，纸杯放在电脑左边');
+ say(bridge,'纸杯现在在哪里');await finishPicture(bridge);assert.match(lastAnswer(events),/上次记录纸杯在电脑左边/);
+ say(bridge,'我不记得放哪里了，你帮我看看之前我放在哪里了');assert.match(lastAnswer(events),/纸杯在电脑左边/);assert.equal(calls,1);
+ result={answer:'看见白色杯状物，材质无法确认。',objects:[],target_visible:null};say(bridge,'这样呢');await finishPicture(bridge);
+ say(bridge,'你还记得纸杯放在哪里吗');assert.match(lastAnswer(events),/纸杯在电脑左边/);assert.equal(calls,2);assert.equal(runtime.memory.get('纸杯').location,'电脑左边');
+});
+
+test('memory tool fallback resolves the current object and reads home memory independently of camera state',t=>{
+ const {runtime,bridge,sent}=visualFixture({place:'home'});t.after(()=>bridge.close());runtime.memory.remember('记住，纸杯放在电脑左侧');
+ for(const [index,phrase]of ['纸杯在哪里','我不记得放哪里了，你帮我看看之前我放在哪里了'].entries()){
+  bridge.lastUserText=phrase;toolCall(bridge,'query_memory',{name:'它'},'recall-'+index);
+  const result=JSON.parse(sent.find(e=>e.item?.call_id==='recall-'+index).item.output);assert.equal(result.record.name,'纸杯');assert.equal(result.is_current,false);
+ }
+});
+
+test('camera snapshots preserve detail and adapt size without exceeding the existing request budget',t=>{
+ const {runtime,preview,document}=runtimeFixture();const bridge=new runtime.Bridge();t.after(()=>bridge.close());
+ Object.assign(preview,{videoWidth:1920,videoHeight:1080,readyState:2,paused:false,srcObject:{getVideoTracks:()=>[{readyState:'live',muted:false}]}});
+ const draws=[],encodes=[];let large=false;
+ const canvas={getContext:()=>({drawImage(...args){draws.push(args);}}),toDataURL(type,quality){encodes.push({width:canvas.width,height:canvas.height,quality});return 'data:image/jpeg;base64,/9j/'+(large&&canvas.width>640?'A'.repeat(250000):'AAAA');}};
+ document.createElement=()=>canvas;
+ assert.equal(bridge.captureScene(),'/9j/AAAA');assert.deepEqual(encodes[0],{width:1280,height:720,quality:0.85});
+ large=true;assert.equal(bridge.captureScene(),'/9j/AAAA');assert.deepEqual(draws.slice(1).map(a=>a.slice(3)),[[1280,720],[960,540],[640,360]]);
+ preview.srcObject=null;assert.throws(()=>bridge.captureScene(),/实时画面/);
 });

@@ -1,5 +1,5 @@
 import {requestText} from './memory.mjs';
-export const asksHistory=text=>/(之前|以前|上次|昨天|前天|记忆|记录|记得|曾经|放哪了|放到哪了|记过)/.test(String(text||''));
+export const asksHistory=text=>/(之前|以前|上次|昨天|前天|记忆|记录|记得|记住|记不清|记不得|想不起来|忘了|忘记|曾经|放哪了|放到哪了|记过)/.test(String(text||''));
 export function observationCommand(text){
   text=String(text||'').trim().replace(/[，,。.!！?？\s]/g,'');
   if(/^(?:小忆|小意|小易)(?:你好)?$/.test(text))return {goal:''};
