@@ -1,3 +1,4 @@
+import {installRetroSkin} from './retro-design.mjs';
 import {UnifiedHome} from './unified-home.mjs';
 import {ConversationView} from './conversation.mjs';
 import {installTextComposer} from './text-composer.mjs';
@@ -42,7 +43,7 @@ async function send(text){
 }
 function clearFrame(){frame=null;clearTimeout(frameTimer);photo.hidden=true;box.hidden=true;$('camera-empty').hidden=false;}
 function sync(){
- $('main-toggle').textContent=paused?'▶ 继续':native.running?'Ⅱ 暂停':'▶ 开始';$('end-conversation').disabled=!native.running&&!paused;$('replay').disabled=!lastAnswer;
+ $('end-conversation').hidden=false;$('end-conversation').disabled=!native.running&&!paused;$('replay').disabled=!lastAnswer;
  $('voice-state').textContent=paused?'已暂停':native.running?(connection==='CONNECTED'?'本机 YOLO · 千问已连接':'本机 YOLO · 千问连接中'):'手机摄像头 · 尚未开始';
  $('connection').textContent=native.error||native.message||'安卓本机识别已就绪';$('place-mode').value=place;
  if(!native.running||paused)clearFrame();home.syncState();
@@ -89,6 +90,8 @@ $('screen-reader-mode').onchange=$('read-aloud').onchange=audioSettings;
 $('settings-form').onsubmit=async e=>{e.preventDefault();try{const s=await call('status');$('config-state').textContent=`安卓本机 YOLO 已就绪，支持 ${s.labels} 类；千问状态：${s.connection}。`;}catch(e){$('config-state').textContent=e.message;}};
 $('search-cancel').onclick=()=>call('cancel');$('search-pause').onclick=()=>perform(paused?'resume':'pause');
 installTextComposer({document,window,send,state:()=>({paused})});
+$('pixel-records-home').onclick=()=>home.close();
+installRetroSkin({document,state:()=>({active:native.running||paused,ready:native.running||paused,paused,source:native.source==='ESP32'?'硬件摄像头':'手机摄像头'})});
 window.nativeBack=()=>{for(const id of ['text-composer','memory-delete-dialog','memory-editor','records-dialog','settings-dialog']){if($(id).open){$(id).close();return true;}}if(native.running){perform('stop');return true;}return false;};
 document.addEventListener('visibilitychange',()=>{if(document.hidden)clearFrame();});
 

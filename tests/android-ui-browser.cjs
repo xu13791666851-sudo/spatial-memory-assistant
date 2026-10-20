@@ -23,7 +23,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
   return route.fulfill({body:await fs.readFile(file),contentType:url.pathname.endsWith('.css')?'text/css':url.pathname.endsWith('.svg')?'image/svg+xml':/\.(mjs|js)$/.test(url.pathname)?'text/javascript':'text/html'});
  });
  await page.goto('https://appassets.androidplatform.net/index.html');await page.waitForFunction(()=>window.nativeCalls.some(c=>c.method==='ready'));
- await page.getByRole('button',{name:'记录',exact:true}).click();await page.getByRole('tab',{name:'物品记忆',exact:true}).click();await page.getByRole('button',{name:'找这件，绿色水杯',exact:true}).click();
+ assert.equal(await page.locator('#end-conversation').isVisible(),true);assert.equal(await page.locator('#replay .pixel-icon').count(),1);await page.getByRole('button',{name:'记录',exact:true}).click();await page.getByRole('tab',{name:'物品记忆',exact:true}).click();await page.getByRole('button',{name:'找这件，绿色水杯',exact:true}).click();
  await page.waitForFunction(()=>window.nativeCalls.some(c=>c.method==='text'&&c.params.text==='找绿色水杯'));await page.waitForFunction(()=>document.getElementById('current-task').textContent.includes('绿色水杯'));
  const jpg=(await fs.readFile('designs/desk-reference.jpg')).toString('base64');
  await page.evaluate(image=>window.nativeEvent({type:'frame',data:{image,width:1600,height:1000,capturedAt:Date.now(),detections:[{label:'cup',confidence:.9,box:[.2,.3,.45,.7]},{label:'laptop',confidence:.95,box:[.5,.1,.95,.8]}]}}),jpg);
