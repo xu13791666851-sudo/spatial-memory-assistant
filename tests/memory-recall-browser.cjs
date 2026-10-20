@@ -13,7 +13,8 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
   return route.fulfill({body,contentType:url.pathname.endsWith('.svg')?'image/svg+xml':url.pathname.endsWith('.css')?'text/css':/\.(mjs|js)$/.test(url.pathname)?'text/javascript':'text/html'});
  });
  await page.goto('https://ui.test/');await page.waitForFunction(()=>!!window.recallTest);await page.selectOption('#place-mode','home');
- await page.evaluate(()=>window.recallTest.runtime.memory.saveVisual('纸杯',{unique:true,location_supported:true,anchor:'电脑',location:'书桌上，电脑左侧'}));
+ await page.evaluate(()=>window.recallTest.runtime.memory.saveVisual('纸杯',{unique:true,location_supported:true,anchor:'电脑',location:'书桌上，电脑左侧',appearance:'白色杯身，上宽下窄，杯口有红色条纹'}));
+ await page.getByRole('button',{name:'记录',exact:true}).click();await page.getByRole('tab',{name:'物品记忆',exact:true}).click();assert.match(await page.locator('.memory-appearance').innerText(),/外观：白色杯身，上宽下窄，杯口有红色条纹/);await page.getByRole('button',{name:'关闭',exact:true}).click();
  const stored=await page.evaluate(()=>localStorage.getItem('spatial-memory.records.v1'));
  const send=async text=>{await page.locator('#text-tools summary').click();await page.fill('#message',text);await page.click('#text-send');await page.locator('#text-composer').waitFor({state:'hidden'});};
  for(const phrase of ['我不记得放哪里了，你帮我看看之前我放在哪里了','白色纸杯上次放在哪里','帮我找纸杯']){

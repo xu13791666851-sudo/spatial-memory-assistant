@@ -214,7 +214,7 @@ export function createRuntime(env){
       try{
         const image=this.captureScene();scene.sent=true;scene.controller=new AbortController();
         const deviceSpeech=!!document.getElementById('fast-describe')?.checked&&(env.supportsSpeech||document.getElementById('screen-reader-mode')?.checked);
-        const requestId=crypto.randomUUID(),task=scene.task?{target:scene.task.target,remember:!!scene.task.saveToken}:null;
+        const requestId=crypto.randomUUID(),task=scene.task?{target:scene.task.target,remember:!!scene.task.saveToken,reference_appearance:scene.task.reference_appearance||''}:null;
         this.visualPending=true;this.suppressResponse=true;this.stopPlayback();
         const response=await fetcher('/api/vision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image,goal:scene.goal,request_id:requestId,task}),signal:scene.controller.signal});
         if(!response.ok){const error=await response.json();throw Error(error.detail||'这次画面理解没有完成，请重新观察。');}

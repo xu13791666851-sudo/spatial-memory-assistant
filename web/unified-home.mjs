@@ -56,7 +56,7 @@ export class UnifiedHome{
     for(const record of records){
       const box=this.document.createElement('article');box.className='memory-item';
       const title=this.document.createElement('h3');title.textContent=record.name;
-      const appearance=this.document.createElement('p');appearance.className='memory-appearance';appearance.textContent=record.appearance||'';appearance.hidden=!appearance.textContent;
+      const appearance=this.document.createElement('p');appearance.className='memory-appearance';appearance.textContent=record.appearance?'外观：'+record.appearance:'外观尚未记录，可在编辑中补充，或对准物品说“记住'+record.name+'的位置”。';
       const position=this.document.createElement('p');const relations=(record.relations||[]).map(v=>v.reference+'的'+v.relation);position.textContent=[record.location,...relations].filter(Boolean).join('；');
       const time=this.document.createElement('time');time.textContent='上次记录：'+new Date(record.recorded_at).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
       const buttons=this.document.createElement('div');buttons.className='memory-actions';

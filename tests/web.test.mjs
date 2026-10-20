@@ -620,7 +620,7 @@ test('find dialogue retains target and uses fresh pictures across follow-ups wit
   say(bridge,'已经对准了');await finishPicture(bridge);assert.match(lastAnswer(events),/右边没有拍全/);assert.doesNotMatch(lastAnswer(events),/上次记录/);
   result=missingCup;say(bridge,'这里没有');await finishPicture(bridge);assert.match(lastAnswer(events),/后来有没有/);
   say(bridge,'可能拿到厨房了');assert.match(lastAnswer(events),/作为这次寻找的线索/);
-  result=seenCup;say(bridge,'这样呢');await finishPicture(bridge);assert.match(lastAnswer(events),/符合.*玻璃杯/);assert.match(lastAnswer(events),/不能确认是同一件/);
+  result=seenCup;say(bridge,'这样呢');await finishPicture(bridge);assert.match(lastAnswer(events),/符合.*玻璃杯/);assert.doesNotMatch(lastAnswer(events),/不能确认是同一件/);
   assert.deepEqual(targets,['蓝色玻璃杯','蓝色玻璃杯','蓝色玻璃杯','蓝色玻璃杯']);assert.equal(JSON.stringify(runtime.memory.rows()),before);
 });
 
@@ -885,4 +885,49 @@ test('camera snapshots preserve detail and adapt size without exceeding the exis
  assert.equal(bridge.captureScene(),'/9j/AAAA');assert.deepEqual(encodes[0],{width:1280,height:720,quality:0.85});
  large=true;assert.equal(bridge.captureScene(),'/9j/AAAA');assert.deepEqual(draws.slice(1).map(a=>a.slice(3)),[[1280,720],[960,540],[640,360]]);
  preview.srcObject=null;assert.throws(()=>bridge.captureScene(),/实时画面/);
+});
+
+test('visual save persists appearance, reload sends only selected appearance, and a verified match reports found',async t=>{
+ const appearance='浅绿色圆柱杯身，白色杯盖，侧面有一个弧形把手';
+ const f=visualFixture({fetch:async url=>Response.json(url==='/api/vision'?{...seenCup,memory_candidate:{...candidate,appearance}}:{configured:true,authenticated:true})});t.after(()=>f.bridge.close());f.runtime.setPlace('home');
+ say(f.bridge,'记住绿色水杯的位置');await finishPicture(f.bridge);assert.match(lastAnswer(f.events),/外观也已保存/);
+ assert.equal(new Memory(f.data).get('绿色水杯').appearance,appearance);
+ const requests=[],comparison={status:'match',unique:true,reason:'浅绿色杯身、白色杯盖和弧形把手均与记录相符'};
+ const next=visualFixture({storage:f.data,fetch:async(url,opts)=>{if(url==='/api/vision'){requests.push(JSON.parse(opts.body));return Response.json({...seenCup,answer:'浅绿色杯子在显示器左侧。',appearance_match:comparison});}return Response.json({configured:true,authenticated:true});}});t.after(()=>next.bridge.close());next.runtime.setPlace('home');
+ const before=f.data.getItem('spatial-memory.records.v1');say(next.bridge,'绿色水杯现在在哪里');await finishPicture(next.bridge);
+ assert.equal(requests[0].task.reference_appearance,appearance);assert.deepEqual(Object.keys(requests[0].task).sort(),['reference_appearance','remember','target']);
+ assert.ok(!JSON.stringify(requests[0]).includes(candidate.location));assert.match(lastAnswer(next.events),/找到了绿色水杯，外观与记录相符/);assert.match(lastAnswer(next.events),/显示器左侧/);assert.doesNotMatch(lastAnswer(next.events),/不能确认是同一件/);
+ assert.equal(f.data.getItem('spatial-memory.records.v1'),before);
+});
+
+test('appearance conflicts, occlusion and multiple candidates produce specific feedback without changing saved identity',async t=>{
+ for(const [status,reason,expected]of [['different','记录是白色杯盖，眼前是黑色杯盖',/外观不一致/],['uncertain','把手被遮挡，无法核对把手形状',/把手被遮挡/],['multiple','两个杯子的颜色和杯盖相同',/多件相近/]]){
+  const f=visualFixture({fetch:async url=>Response.json(url==='/api/vision'?{...seenCup,appearance_match:{status,unique:false,reason}}:{configured:true,authenticated:true})});t.after(()=>f.bridge.close());f.runtime.setPlace('home');
+  f.runtime.memory.saveVisual('绿色水杯',{...candidate,appearance:'绿色杯身，白色杯盖，弧形把手'});const before=f.data.getItem('spatial-memory.records.v1');
+  say(f.bridge,'绿色水杯现在在哪里');await finishPicture(f.bridge);assert.match(lastAnswer(f.events),expected);assert.ok(lastAnswer(f.events).includes(reason));assert.doesNotMatch(lastAnswer(f.events),/找到了|外观与记录相符/);assert.equal(f.data.getItem('spatial-memory.records.v1'),before);
+ }
+});
+
+test('legacy memory remains readable and fresh observation neither fabricates appearance nor repeats identity boilerplate',async t=>{
+ const requests=[],f=visualFixture({fetch:async(url,opts)=>{if(url==='/api/vision'){requests.push(JSON.parse(opts.body));return Response.json({...seenCup,appearance_match:{status:'match',unique:true,reason:'模型无依据的比对'}});}return Response.json({configured:true,authenticated:true});}});t.after(()=>f.bridge.close());f.runtime.setPlace('home');
+ f.runtime.memory.remember('记住，绿色水杯放在电脑左侧');say(f.bridge,'绿色水杯现在在哪里');await finishPicture(f.bridge);
+ assert.equal(requests[0].task.reference_appearance,'');assert.match(lastAnswer(f.events),/当前画面中看到了/);assert.doesNotMatch(lastAnswer(f.events),/不能确认是同一件|外观与记录相符/);assert.equal(f.runtime.memory.get('绿色水杯').appearance,'');
+ say(f.bridge,'上次放在哪里');assert.match(lastAnswer(f.events),/电脑左侧/);assert.equal(requests.length,1);
+});
+
+test('ambiguous names and fresh ordinary scenes never send an arbitrary saved appearance',async()=>{
+ const {FindDialogue}=await import('../web/find-dialogue.mjs');const memory=new Memory(storage());
+ memory.saveVisual('红色水杯',{...candidate,appearance:'红色杯身，白色把手'});memory.saveVisual('绿色水杯',{...candidate,appearance:'绿色杯身，黑色杯盖'});
+ const d=new FindDialogue(memory);
+ assert.equal(d.intent('杯子现在在哪里','home').task.reference_appearance,'');
+ d.reset();assert.equal(d.intent('绿色水杯现在在哪里','explore').task.reference_appearance,'');
+ d.intent('之前记住的绿色水杯在哪里','explore');assert.equal(d.intent('现在在哪里','explore').task.reference_appearance,'绿色杯身，黑色杯盖');
+});
+
+test('explicit placement changes preserve recorded appearance; a new authorized visual save can update it',()=>{
+ const data=storage(),m=new Memory(data),appearance='浅绿色，有白色杯盖';m.saveVisual('水杯',{...candidate,appearance});const id=m.get('水杯').object_id;
+ m.remember('记住，水杯放在厨房桌上');assert.equal(m.get('水杯').appearance,appearance);assert.equal(m.get('水杯').object_id,id);
+ m.prepare({action:'move',name:'水杯',location:'客厅茶几'});m.confirm(m.pending.token);assert.equal(m.get('水杯').appearance,appearance);
+ m.saveVisual('水杯',{...candidate,appearance:''});assert.equal(m.get('水杯').appearance,appearance);
+ m.saveVisual('水杯',{...candidate,appearance:'浅绿色杯身，杯盖已取下'});assert.equal(new Memory(data).get('水杯').appearance,'浅绿色杯身，杯盖已取下');assert.equal(m.get('水杯').object_id,id);
 });

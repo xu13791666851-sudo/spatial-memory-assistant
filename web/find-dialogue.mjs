@@ -1,4 +1,4 @@
-import {normalizeName,sameType,rememberCommand,requestText,VisualEvidenceError,MemoryPersistenceError} from './memory.mjs';
+import {normalizeName,sameType,rememberCommand,requestText,appearanceText,VisualEvidenceError,MemoryPersistenceError} from './memory.mjs';
 import {asksHistory} from './interaction.mjs';
 
 const clean=text=>String(text||'').trim().replace(/^(?:你好)?(?:小忆|小意|小易)[，,\s]*/,'').replace(/[。！？!?]+$/,'');
@@ -104,7 +104,7 @@ export class FindDialogue{
     const target=query?.target||searchTarget(text,this.target);
     if(target){
       this.focus(target);
-      this.allowHistory=place==='home'||history;
+      this.allowHistory=place==='home'||history||!!this.objectId;
       if(history||(place==='home'&&!asksCurrentView(text)&&(query||this.memory.find(target).length))){
         const records=this.memory.find(target);this.choices=records.length>1?records:[];
         if(records.length===1){if(records[0].name.length>=target.length)this.focus(records[0].name);this.objectId=records[0].object_id||records[0].id;this.misses=1;}
@@ -127,9 +127,10 @@ export class FindDialogue{
     return null;
   }
   observation(){
-    if(!this.saving&&this.allowHistory){const records=this.memory.find(this.target);if(records.length===1){if(records[0].name.length>=this.target.length)this.target=records[0].name;this.objectId=records[0].object_id||records[0].id;}}
+    let reference_appearance='';
+    if(!this.saving&&this.allowHistory){const records=this.memory.find(this.target);if(records.length===1){if(records[0].name.length>=this.target.length)this.target=records[0].name;this.objectId=records[0].object_id||records[0].id;reference_appearance=appearanceText(records[0].appearance);}}
     const target=this.target,save=this.saving;
-    return {kind:'observe',goal:`寻找${target}。${save?.selector?'用户选择：'+save.selector+'。':''}只描述当前可见证据。`,task:{target,allowHistory:this.allowHistory,saveToken:save?.token||null,selector:save?.selector||''}};
+    return {kind:'observe',goal:`寻找${target}。${save?.selector?'用户选择：'+save.selector+'。':''}只描述当前可见证据。`,task:{target,allowHistory:this.allowHistory,saveToken:save?.token||null,selector:save?.selector||'',reference_appearance}};
   }
   complete(task,result){
     if(!task||task.target!==this.target)return {answer:result.answer};
@@ -156,7 +157,15 @@ export class FindDialogue{
       this.lastQuestion=question;
       return {answer:'还没有保存。'+question,saved:false};
     }
-    if(result.target_visible===true){this.misses=0;this.lastQuestion='';return {answer:`当前画面中看到了符合“${this.target}”描述的物品。${result.answer} 外观相似还不能确认是同一件。`};}
+    const comparison=appearanceText(task.reference_appearance)?result.appearance_match:null;
+    if(comparison?.status==='different')return {answer:`眼前物品与保存的外观不一致：${comparison.reason} 请再看看其他位置。`};
+    if(comparison?.status==='multiple')return {answer:`画面中有多件相近的物品：${comparison.reason} 请把要找的物品单独拍清楚，再说“这样呢”。`};
+    if(comparison?.status==='uncertain')return {answer:`${comparison.reason} 请把相关细节拍清楚，再说“这样呢”。`};
+    if(result.target_visible===true){
+      this.misses=0;this.lastQuestion='';
+      if(comparison?.status==='match')return {answer:`找到了${this.target}，外观与记录相符。${result.answer}`};
+      return {answer:`当前画面中看到了符合“${this.target}”描述的物品。${result.answer}`};
+    }
     if(result.target_visible!==false)return {answer:result.answer+' 请把目标区域拍清楚，再说“这样呢”。'};
     this.misses++;
     const matches=task.allowHistory?this.memory.find(this.target):[],saved=matches.length===1?matches[0]:null;

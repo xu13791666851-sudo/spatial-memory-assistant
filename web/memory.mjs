@@ -5,6 +5,7 @@ const clean=(value,max=120)=>{
   return value;
 };
 export const normalizeName=value=>String(value||'').trim().replace(/[，。！？!?,]+$/,'').replace(/^(?:这个|那个|这只|那只|这一个|那一个|一个|一只)(?:的)?/,'').trim();
+export const appearanceText=value=>typeof value==='string'&&value.trim().length<=150&&!/[\x00-\x1f]/.test(value)?value.trim():'';
 const canonical=value=>normalizeName(value).replace(/^我的/,'').replace(/玻璃杯|水杯/g,'杯子').replace(/杯$/,'杯子').replace(/的/g,'');
 export const sameType=(a,b)=>{
   a=canonical(a);b=canonical(b);
@@ -68,20 +69,21 @@ export class Memory {
     const location=clean(candidate.location),anchor=clean(candidate.anchor,60);
     let rows,old;
     try{rows=this.rows();old=this.all().find(r=>normalizeName(r.name)===name);}catch{throw new MemoryPersistenceError('浏览器中的物品记忆暂时无法读取。');}
-    const record={id:this.uuid(),object_id:old?.object_id||old?.id||this.uuid(),place:'home',name,location,anchor,event_time:'观察时',observed_at:observedAt||new Date(this.clock()).toISOString(),recorded_at:new Date(this.clock()).toISOString(),source:'USER_REQUESTED_VISUAL',state:'HISTORICAL'};
+    const observedAppearance=appearanceText(candidate.appearance),appearance=observedAppearance||appearanceText(old?.appearance);
+    const record={id:this.uuid(),object_id:old?.object_id||old?.id||this.uuid(),place:'home',name,location,anchor,appearance,event_time:'观察时',observed_at:observedAt||new Date(this.clock()).toISOString(),recorded_at:new Date(this.clock()).toISOString(),source:'USER_REQUESTED_VISUAL',state:'HISTORICAL'};
     rows.push(record);
     try{
       this.storage.setItem(this.key,JSON.stringify(rows));
-      if(!this.rows().some(r=>r.id===record.id&&r.name===name&&r.location===location))throw Error('write not retained');
+      if(!this.rows().some(r=>r.id===record.id&&r.name===name&&r.location===location&&r.appearance===appearance))throw Error('write not retained');
     }catch{throw new MemoryPersistenceError('浏览器没有成功保存物品记忆。');}
     this.last=name;this.pending=null;
-    return {...this.result(`已记住：${name}在${location}。这是本次观察的位置，以后需要时可以重新确认。`),saved:true,record};
+    return {...this.result(`已记住：${name}在${location}。${observedAppearance?'外观也已保存：'+observedAppearance+'。':appearance?'这次外观未看清，保留原来的外观记录。':'这次只记下位置，外观还没看清；可以把物品拍近一些，再让我记住。'}`),saved:true,record};
   }
   remember(text){
     const command=rememberCommand(text);if(!command)return null;
     const name=clean(normalizeName(command.name),40),location=clean(command.location),event_time=clean(command.event_time,80);
-    const rows=this.rows();
-    rows.push({id:this.uuid(),place:'home',name,location,event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'});
+    const rows=this.rows(),old=this.all().find(r=>normalizeName(r.name)===name);
+    rows.push({id:this.uuid(),object_id:old?.object_id||old?.id,appearance:appearanceText(old?.appearance),place:'home',name,location,event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'});
     this.storage.setItem(this.key,JSON.stringify(rows));
     this.last=name;this.pending=null;
     return {...this.result(`已记住：${name}在${location}。这是你提供的家中历史位置，需要时我会重新看眼前确认。`),saved:true};
@@ -100,7 +102,7 @@ export class Memory {
     if(!p||p.token!==token||p.expires<=this.clock()){this.pending=null;throw Error('待确认操作已失效，请重新说明。');}
     if(cancel){this.pending=null;return this.result('已取消。');}
     const rows=this.rows();const old=this.get(p.name);
-    const next=p.action==='delete'?rows.filter(r=>normalizeName(r.name)!==normalizeName(p.name)):[...rows,{id:this.uuid(),place:'home',name:p.name,location:p.location,event_time:p.action==='correct'?old.event_time:p.event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'}];
+    const next=p.action==='delete'?rows.filter(r=>normalizeName(r.name)!==normalizeName(p.name)):[...rows,{id:this.uuid(),object_id:old?.object_id||old?.id,appearance:appearanceText(old?.appearance),place:'home',name:p.name,location:p.location,event_time:p.action==='correct'?old.event_time:p.event_time,recorded_at:new Date(this.clock()).toISOString(),source:'MANUAL',state:'HISTORICAL'}];
     this.storage.setItem(this.key,JSON.stringify(next));
     this.pending=null;return this.result(p.action==='delete'?'已删除这件物品的本机记录。':'已保存你提供的位置，尚未确认现在的位置。');
   }

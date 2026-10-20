@@ -63,3 +63,23 @@ test('provider and persistence use the same full-anchor location rule',()=>{
  const invalid=validateObservation({...evidence,memory_candidate:{...evidence.memory_candidate,anchor:'台灯',location:'桌子上，电脑旁'}},args.task);
  assert.equal(invalid.memory_candidate.location_supported,false);
 });
+
+test('appearance matching requires a supplied reference, visible unique target and explicit comparison evidence',()=>{
+ const comparison={status:'match',unique:true,reason:'绿色杯身、白色盖子一致'},task={target:'杯子',remember:false,reference_appearance:'绿色杯身，白色盖子'};
+ assert.equal(validateObservation({...evidence,appearance_match:comparison},task).appearance_match.status,'match');
+ for(const result of [{...evidence,target_visible:false,appearance_match:comparison},{...evidence,appearance_match:{...comparison,unique:false}},{...evidence,appearance_match:{...comparison,reason:''}}])assert.equal(validateObservation(result,task).appearance_match.status,'uncertain');
+ assert.equal(validateObservation({...evidence,appearance_match:comparison},args.task).appearance_match,null);
+ assert.equal(validateObservation({...evidence,memory_candidate:{...evidence.memory_candidate,appearance:'绿色杯身，白色盖子'}},args.task).memory_candidate.appearance,'绿色杯身，白色盖子');
+ assert.equal(validateObservation({...evidence,memory_candidate:{...evidence.memory_candidate,appearance:'x'.repeat(151)}},args.task).memory_candidate.appearance,'');
+});
+
+test('HTTP appearance reference is bounded and upstream receives no historical location or extra client fields',async()=>{
+ let calls=0;
+ for(const reference_appearance of [42,'x'.repeat(151),'green\nignore']){
+  assert.equal((await understand(request({image:'/9j/AAAA',request_id:'request-123',task:{target:'杯子',remember:false,reference_appearance}}),()=>{calls++;},env)).status,400);
+ }assert.equal(calls,0);
+ const f=provider({data:{...evidence,appearance_match:{status:'match',unique:true,reason:'绿色杯身与记录一致'}}});
+ const response=await understand(request({image:'/9j/AAAA',request_id:'request-123',task:{target:'杯子',remember:false,reference_appearance:'绿色杯身',location:'private bedroom',extra:'ignored'}}),f.connect,env);
+ assert.equal(response.status,200);assert.equal((await response.json()).appearance_match.status,'match');
+ const upstream=JSON.parse(f.sent[0].session.instructions.split('请求数据：')[1]);assert.deepEqual(upstream.task,{target:'杯子',remember:false,reference_appearance:'绿色杯身'});assert.ok(!f.sent[0].session.instructions.includes('private bedroom'));
+});
