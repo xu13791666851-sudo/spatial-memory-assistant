@@ -14,6 +14,8 @@ export class UnifiedHome{
     $('expand-video').onclick=()=>this.camera(document.body.dataset.layout==='video'?'home':'video');$('collapse-camera').onclick=()=>this.camera(this.collapsed?'home':'collapsed');
     $('open-accessibility').onclick=()=>this.actions.settings($('open-accessibility'));
     $('answer-detail').onclick=()=>{const expanded=$('answer-detail').getAttribute('aria-expanded')!=='true';$('answer-detail').setAttribute('aria-expanded',String(expanded));$('answer-detail').textContent=expanded?'收起全文':'展开全文';document.querySelector('.answer-card').classList.toggle('full-answer',expanded);};
+    $('search-pause').onclick=()=>this.actions.send(this.runtime.taskState()?.search?.state==='paused'?'继续找':'暂停寻找');
+    $('search-cancel').onclick=()=>this.actions.send('停止找物');
     $('memory-search').oninput=()=>this.renderMemories();
     $('memory-edit-close').onclick=()=>$('memory-editor').close();
     $('memory-editor').addEventListener('close',()=>{if($('records-dialog').open)$('record-tab-memory').focus();else $('open-records').focus();});
@@ -41,9 +43,17 @@ export class UnifiedHome{
   }
   syncState(){
     const state=this.state(),task=this.runtime.taskState?.();const name=state.active?task?.target:null;
+    const scan=task?.search,searching=state.active&&scan&&['searching','confirming','paused'].includes(scan.state);
+    this.$('search-controls').hidden=!searching;
+    this.$('search-pause').disabled=state.paused;
+    this.$('search-cancel').disabled=state.paused;
+    const status=scan?.state==='confirming'?'看到候选，正在用新画面核对。请保持镜头稳定。':scan?.notice?scan.notice:scan?.state==='paused'?'寻找已暂停，可继续或取消。':'正在自动寻找，请缓慢扫视并在每个区域停留。';
+    if(this.$('search-status').textContent!==status)this.$('search-status').textContent=status;
+    const pauseLabel=scan?.state==='paused'?'继续寻找':'暂停寻找';
+    if(this.$('search-pause').textContent!==pauseLabel)this.$('search-pause').textContent=pauseLabel;
     const title=name?(task.awaiting_save_clarification?'正在记住':'寻找')+name:'看见周围，记住位置。';
     if(this.$('current-task').textContent!==title)this.$('current-task').textContent=title;
-    const label=name?(state.paused?'任务已暂停':'当前任务'):'随时说出你想做的事';if(this.$('task-kind').textContent!==label)this.$('task-kind').textContent=label;
+    const label=name?(state.paused||scan?.state==='paused'?'任务已暂停':scan?.state==='found'?'本次已找到':searching?'持续寻找中':'当前任务'):'随时说出你想做的事';if(this.$('task-kind').textContent!==label)this.$('task-kind').textContent=label;
     const recordText=name?(state.paused?'已暂停 · ':'当前任务 · ')+name:'查看记录，随时回到首页';if(this.$('records-task').textContent!==recordText)this.$('records-task').textContent=recordText;
     this.$('records-end').disabled=!state.active;
   }
@@ -56,7 +66,7 @@ export class UnifiedHome{
     for(const record of records){
       const box=this.document.createElement('article');box.className='memory-item';
       const title=this.document.createElement('h3');title.textContent=record.name;
-      const appearance=this.document.createElement('p');appearance.className='memory-appearance';appearance.textContent=record.appearance||'';appearance.hidden=!appearance.textContent;
+      const appearance=this.document.createElement('p');appearance.className='memory-appearance';appearance.textContent=record.appearance?'外观：'+record.appearance:'外观尚未记录，可在编辑中补充，或对准物品说“记住'+record.name+'的位置”。';
       const position=this.document.createElement('p');const relations=(record.relations||[]).map(v=>v.reference+'的'+v.relation);position.textContent=[record.location,...relations].filter(Boolean).join('；');
       const time=this.document.createElement('time');time.textContent='上次记录：'+new Date(record.recorded_at).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
       const buttons=this.document.createElement('div');buttons.className='memory-actions';

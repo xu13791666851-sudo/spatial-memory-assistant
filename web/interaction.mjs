@@ -1,7 +1,9 @@
-export const asksHistory=text=>/(之前|以前|上次|昨天|前天|记忆|记录|记得|曾经|放哪了|放到哪了|记过)/.test(String(text||''));
+import {requestText} from './memory.mjs';
+export const asksHistory=text=>/(之前|以前|上次|昨天|前天|记忆|记录|记得|记住|记不清|记不得|想不起来|忘了|忘记|曾经|放哪了|放到哪了|记过)/.test(String(text||''));
 export function observationCommand(text){
   text=String(text||'').trim().replace(/[，,。.!！?？\s]/g,'');
   if(/^(?:小忆|小意|小易)(?:你好)?$/.test(text))return {goal:''};
+  text=requestText(text);
   text=text.replace(/^(?:你好)?(?:小忆|小意|小易)[，,]?/,'');
   if(/^(?:请|帮我)?(?:再看(?:一)?下|再看看|再观察(?:一下|一次)?|重新观察|看(?:一)?下(?:周围)?|看看周围|描述(?:一下)?(?:环境|周围)|开启摄像头|打开摄像头|开始观察)$/.test(text))return {goal:''};
   const match=text.match(/^(?:请|帮我)?(?:找(?:一下)?|寻找|看看)(.{1,40})$/);
@@ -11,6 +13,7 @@ export function observationCommand(text){
 export function currentViewIntent(text){
   text=String(text||'').trim();if(asksHistory(text))return null;
   const command=observationCommand(text);if(command)return command;
+  if(/(?:画面|镜头|眼前|这里).{0,20}(?:有没有|是否有|看得到|看不到)|(?:看见|看到|找到).{1,30}(?:了吗|了没有)/.test(text))return {goal:text};
   if(/(在哪里|在哪儿|在哪|哪边|哪一边|什么位置|相对位置|具体位置|这是什么|这.{0,12}是什么|旁边是什么|有什么|看到了什么|描述.{0,5}(环境|画面))/.test(text))return {goal:text};
   return null;
 }
