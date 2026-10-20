@@ -54,12 +54,11 @@ await page.waitForFunction(()=>window.searchTest.runtime.memory.get('绿色水�
 assert.equal(vision,4);assert.equal(await page.evaluate(()=>window.searchTest.runtime.memory.all().length),1);
 assert.equal(await page.evaluate(()=>window.searchTest.runtime.memory.get('绿色水杯').object_id),originalId);
 assert.match(await page.locator('#latest-answer').innerText(),/已更新这件物品的位置/);
-await page.evaluate(()=>window.searchTest.sendText('帮我再次寻找这个物品'));assert.match(await page.locator('#latest-answer').innerText(),/上次记录在柜子上，药盒旁边/);await page.click('#open-records');await page.getByRole('button',{name:'暂停寻找',exact:true}).click();await page.click('#close-records');
+await page.evaluate(()=>window.searchTest.sendText('帮我再次寻找这个物品'));assert.match(await page.locator('#latest-answer').innerText(),/上次记录在柜子上，药盒旁边/);await page.evaluate(()=>window.searchTest.sendText('暂停寻找'));
 assert.equal(await page.evaluate(()=>window.searchTest.runtime.taskState().search.state),'paused');assert.equal(vision,4);
-await page.click('#open-records');await page.getByRole('button',{name:'继续寻找',exact:true}).click();await page.click('#close-records');assert.equal(await page.evaluate(()=>window.searchTest.runtime.taskState().search.state),'searching');
-await page.click('#open-records');
-for(const size of [{width:320,height:568},{width:390,height:844}]){await page.setViewportSize(size);await page.waitForFunction(()=>document.getElementById('records-dialog').getBoundingClientRect().bottom<=innerHeight);const b=await page.locator('#search-cancel').boundingBox();assert.ok(b.x>=0&&b.y>=0&&b.x+b.width<=size.width&&b.y+b.height<=size.height,JSON.stringify(b));}
-await page.getByRole('button',{name:'取消寻找',exact:true}).click();assert.equal(await page.evaluate(()=>window.searchTest.runtime.taskState().search.state),'idle');assert.equal(await page.locator('#search-controls').isVisible(),false);
+await page.evaluate(()=>window.searchTest.sendText('继续找'));assert.equal(await page.evaluate(()=>window.searchTest.runtime.taskState().search.state),'searching');
+for(const size of [{width:320,height:568},{width:390,height:844}]){await page.setViewportSize(size);await page.waitForFunction(()=>document.getElementById('main-toggle').getBoundingClientRect().bottom<=innerHeight);const b=await page.locator('#main-toggle').boundingBox();assert.ok(b.x>=0&&b.y>=0&&b.x+b.width<=size.width&&b.y+b.height<=size.height,JSON.stringify(b));}
+await page.evaluate(()=>window.searchTest.sendText('停止找物'));assert.equal(await page.evaluate(()=>window.searchTest.runtime.taskState().search.state),'idle');assert.equal(await page.locator('#search-controls').isVisible(),false);
 assert.equal(await page.evaluate(()=>window.searchTest.bridge().videoTrack.readyState==='live'),true);
 if(await page.locator('#records-dialog').isVisible())await page.click('#close-records');await page.click('#main-toggle');
 await page.reload();await page.waitForFunction(()=>window.searchTest);await page.evaluate(()=>window.spatialRuntime.setPlace('home'));
