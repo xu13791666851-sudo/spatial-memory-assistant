@@ -23,7 +23,7 @@ class SpeechCoordinator(
 ) : Closeable {
     private val handler = Handler(Looper.getMainLooper())
     private val deduplicator = SpeechDeduplicator()
-    private var enabled = true
+    @Volatile private var enabled = true
     fun setEnabled(value: Boolean) { enabled = value; if (!value) handler.post { waiting.clear(); tts.stop(); microphoneEnabled(true) } }
     private var ready = false
     private var closed = false

@@ -17,6 +17,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
@@ -110,6 +112,10 @@ class PixelHomeActivity : ComponentActivity() {
                 catch (_: Throwable) { response.put("error", "这次操作没有完成，请检查权限、连接和输入后重试。") }
                 reply.postMessage(response.toString())
             }
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(web) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom); insets
         }
         setContentView(web)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {

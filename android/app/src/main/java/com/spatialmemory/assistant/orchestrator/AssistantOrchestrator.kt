@@ -393,14 +393,17 @@ class AssistantOrchestrator(
 
     suspend fun stop() {
         guard.next()
-        listOf(sourceJob, processingJob, qwenJob, qwenConnectJob, qwenFrameJob, frameWatchdogJob, sourceStateJob, verificationTimeoutJob).forEach { it?.cancelAndJoin() }
-        sourceJob = null; processingJob = null; qwenJob = null; qwenConnectJob = null; qwenFrameJob = null; frameWatchdogJob = null; sourceStateJob = null; verificationTimeoutJob = null
+        mutableState.value = AssistantState(message = "已停止")
+        qwen.setMicrophoneEnabled(false)
+        val jobs = listOf(sourceJob, processingJob, qwenJob, qwenConnectJob, qwenFrameJob, frameWatchdogJob, sourceStateJob, verificationTimeoutJob)
+        jobs.forEach { it?.cancel() }
+        // Release media before waiting for an in-flight HTTP verification.
         source?.stop(); source = null
         qwen.disconnect()
-        router.stop()
-        gate.reset()
-        taskEngine.clear()
-        speech.reset()
+        jobs.forEach { it?.join() }
+        sourceJob = null; processingJob = null; qwenJob = null; qwenConnectJob = null; qwenFrameJob = null; frameWatchdogJob = null; sourceStateJob = null; verificationTimeoutJob = null
+        router.stop(); gate.reset(); taskEngine.clear(); speech.reset()
+        candidateDirectory.listFiles()?.forEach { it.delete() }
         mutableState.value = AssistantState(message = "已停止")
     }
 }
