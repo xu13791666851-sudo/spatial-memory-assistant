@@ -17,5 +17,8 @@
   },
   "devDependencies": {
     "wrangler": "4.151.1"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
   }
 }

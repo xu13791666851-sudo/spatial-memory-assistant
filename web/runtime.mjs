@@ -2,7 +2,7 @@ import {FindDialogue,searchTarget} from './find-dialogue.mjs';
 import {Memory,rememberCommand} from './memory.mjs';
 import {ObservationGate,asksHistory,currentViewIntent} from './interaction.mjs';
 import {SessionContext,placeIntent} from './context.mjs';
-import {readEvents} from './stream.mjs';
+import {validateObservation} from './realtime-observation.mjs';
 import {PERSON_CONTEXT_RULES} from './person-context.mjs';
 import {interfaceCommand} from './interface-commands.mjs';
 
@@ -146,7 +146,7 @@ export function createRuntime(env){
         this.attachVideo().then(()=>{this.photoTimer=setTimeout(()=>this.clearVideoTrack(),1000);this.emit({type:'app.image_sent',message:'已查看一秒当前画面，请口头提问。'});}).catch(()=>this.emit({type:'app.error',message:'当前画面未能发送。'}));
       }
     }
-    control(event){if(!this.closed&&this.channel?.readyState==='open'){this.channel.send(JSON.stringify({...event,event_id:'event_'+crypto.randomUUID()}));return true;}return false;}
+    control(event){if(event.type==='response.cancel'&&!this.active)return false;if(!this.closed&&this.channel?.readyState==='open'){this.channel.send(JSON.stringify({...event,event_id:'event_'+crypto.randomUUID()}));return true;}return false;}
     requestReply(text='',automatic=false,requiresContext=true,replay=false){
       if(this.closed||this.paused)return;
       if(automatic&&this.userSpoke)return;
@@ -187,6 +187,8 @@ export function createRuntime(env){
     captureScene(){
       if(env.captureFrame)return env.captureFrame();
       const preview=document.getElementById('preview');
+      const track=preview.srcObject?.getVideoTracks?.()[0];
+      if(!track||track.readyState!=='live'||track.muted)throw Error('这次没有获取到实时画面，请重新开启摄像头。');
       if(preview.readyState<2||!preview.videoWidth||!preview.videoHeight||preview.paused)throw Error('Frame unavailable');
       const canvas=document.createElement('canvas');const scale=Math.min(1,640/Math.max(preview.videoWidth,preview.videoHeight));
       canvas.width=Math.round(preview.videoWidth*scale);canvas.height=Math.round(preview.videoHeight*scale);canvas.getContext('2d').drawImage(preview,0,0,canvas.width,canvas.height);
@@ -204,21 +206,13 @@ export function createRuntime(env){
       try{
         const image=this.captureScene();scene.sent=true;scene.controller=new AbortController();
         const deviceSpeech=!!document.getElementById('fast-describe')?.checked&&(env.supportsSpeech||document.getElementById('screen-reader-mode')?.checked);
-        const stream=!!deviceSpeech&&!document.getElementById('screen-reader-mode')?.checked&&!scene.goal;
-        const response=await fetcher('/api/vision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image,goal:scene.goal,stream,...(scene.task?{task:{target:scene.task.target,remember:!!scene.task.saveToken}}:{})}),signal:scene.controller.signal});
-        if(!response.ok){const error=await response.json();throw Error(error.detail||'当前画面未能理解。');}
-        let result;
-        if(response.headers.get('content-type')?.includes('text/event-stream')){
-          scene.streaming=true;scene.speechToken=crypto.randomUUID();this.localSpeechToken=scene.speechToken;this.visualPending=true;this.suppressResponse=true;this.stopPlayback();
-          this.emit({type:'app.scene_begin',token:scene.speechToken});
-          for await(const event of readEvents(response.body)){
-            if(this.closed||this.paused||this.sceneCommit!==scene)return;
-            if(event.type==='delta')this.emit({type:'app.scene_delta',text:event.text,token:scene.speechToken});
-            if(event.type==='done')result=event.result;
-            if(event.type==='error')throw Error(event.detail||'当前画面的理解没有完成。');
-          }
-          if(!result)throw Error('当前画面的理解没有完成。');
-        }else result=await response.json();
+        const requestId=crypto.randomUUID(),task=scene.task?{target:scene.task.target,remember:!!scene.task.saveToken}:null;
+        this.visualPending=true;this.suppressResponse=true;this.stopPlayback();
+        const response=await fetcher('/api/vision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image,goal:scene.goal,request_id:requestId,task}),signal:scene.controller.signal});
+        if(!response.ok){const error=await response.json();throw Error(error.detail||'这次画面理解没有完成，请重新观察。');}
+        const payload=await response.json();
+        if(payload.request_id!==requestId||payload.frame_received!==true||!['clear','uncertain'].includes(payload.frame_status))throw Error('这次没有获取到匹配的画面结果，请重新观察。');
+        const result=validateObservation(payload,task);
         if(this.closed||this.paused||this.sceneCommit!==scene||this.videoId!==scene.id||this.mediaGeneration!==scene.generation)return;
         if(typeof result.answer!=='string'||!result.answer.trim())throw Error('当前画面未能理解。');
         let outcome={answer:result.answer};
