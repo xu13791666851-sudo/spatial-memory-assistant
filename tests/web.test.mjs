@@ -994,7 +994,7 @@ test('history-only questions and ambiguous saved names never start continuous ob
 
 test('a search rate limit pauses without repeated retries or overwriting memory',async t=>{
  const clock=searchClock();let calls=0;const {bridge,events}=visualFixture({searchClock:clock,fetch:async url=>url==='/api/vision'?(calls++,new Response('Rate limited',{status:429})):Response.json({configured:true,authenticated:true})});t.after(()=>bridge.close());
- say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);assert.equal(bridge.search.state,'paused');assert.match(events.findLast(e=>e.type==='app.video_error').message,/稍等片刻/);await clock.advance(60000);assert.equal(calls,1);
+ say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);assert.equal(bridge.search.state,'paused');assert.match(bridge.search.notice,/稍等片刻/);assert.ok(!events.some(e=>e.type==='app.video_error'));assert.ok(bridge.videoId);await clock.advance(60000);assert.equal(calls,1);
 });
 test('manual replay pauses an in-flight search and cannot strand its scheduler in searching state',async t=>{
  const clock=searchClock();let finish;const {bridge,events}=visualFixture({searchClock:clock,fetch:async url=>url==='/api/vision'?await new Promise(resolve=>finish=resolve):Response.json({configured:true,authenticated:true})});t.after(()=>bridge.close());
@@ -1022,4 +1022,38 @@ test('phase two pause during handshake prevents capture and resume opens a new i
  const {bridge}=visualFixture({visionStreamUrl:'wss://stream.test',WebSocket:StreamSocket,searchClock:clock,captureFrame:()=>{captures++;return '/9j/AAAA';}});t.after(()=>bridge.close());
  say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);say(bridge,'暂停寻找');assert.equal(sockets[0].closed,true);await settle();assert.equal(captures,0);
  say(bridge,'继续找');await clock.advance(1000);await finishPicture(bridge);assert.equal(sockets.length,2);assert.equal(captures,0);say(bridge,'取消');assert.equal(sockets[1].closed,true);
+});
+
+test('two failed stream handshakes fall back automatically with fresh frames, same target and camera',async t=>{
+ const clock=searchClock(),sockets=[],images=[];let captures=0;
+ class Socket{constructor(){sockets.push(this);}close(){this.closed=true;}}
+ const {bridge,runtime,events}=visualFixture({visionStreamUrl:'wss://stream.test',WebSocket:Socket,searchClock:clock,captureFrame:()=>'/9j/new-'+(++captures),fetch:async(url,init)=>{
+  if(url!=='/api/vision')return Response.json({configured:true,authenticated:true});const f=JSON.parse(init.body);images.push(f);return Response.json(seenCup);
+ }});t.after(()=>bridge.close());runtime.setPlace('home');runtime.memory.remember('记住，水杯放在木桌上');const before=JSON.stringify(runtime.memory.all());
+ say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);const camera=bridge.videoId;
+ sockets[0].onerror();await settle();assert.match(bridge.search.notice,/自动重连/);assert.equal(bridge.videoId,camera);assert.equal(captures,0);
+ await clock.advance(1500);await finishPicture(bridge);assert.equal(sockets.length,2);sockets[1].onerror();await settle();assert.equal(bridge.search.fallback,true);assert.match(bridge.search.notice,/间隔观察/);
+ await clock.advance(1);await finishPicture(bridge);assert.equal(images.length,1);assert.equal(bridge.search.state,'confirming');
+ await clock.advance(8000);await finishPicture(bridge);assert.equal(images.length,2);assert.equal(bridge.search.state,'found');assert.equal(sockets.length,2);assert.equal(bridge.videoId,camera);assert.equal(new Set(images.map(f=>f.image)).size,2);assert.ok(images.every(f=>f.task.target==='水杯'&&!f.task.remember));assert.equal(JSON.stringify(runtime.memory.all()),before);assert.ok(!events.some(e=>e.type==='app.video_error'));
+});
+test('stream recovery resets candidate confirmation and discards a late old-socket result',async t=>{
+ const clock=searchClock(),sockets=[];
+ class Socket{constructor(){sockets.push(this);queueMicrotask(()=>this.onmessage({data:JSON.stringify({type:'ready',protocol:1})}));}send(raw){this.frame=JSON.parse(raw);}close(){this.closed=true;}result(){this.onmessage({data:JSON.stringify({type:'observation',request_id:this.frame.request_id,frame_received:true,frame_status:'clear',...seenCup})});}}
+ const {bridge,events}=visualFixture({visionStreamUrl:'wss://stream.test',WebSocket:Socket,searchClock:clock});t.after(()=>bridge.close());say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);sockets[0].result();await settle();assert.equal(bridge.search.state,'confirming');
+ await clock.advance(2000);await finishPicture(bridge);sockets[0].onerror();await settle();sockets[0].result();await settle();assert.equal(bridge.search.hits,0);
+ await clock.advance(2000);await finishPicture(bridge);sockets[1].result();await settle();assert.equal(bridge.search.state,'confirming');assert.ok(!events.some(e=>e.type==='app.scene_fallback'));
+ await clock.advance(2000);await finishPicture(bridge);sockets[1].result();await settle();assert.equal(bridge.search.state,'found');
+});
+test('pause or cancel during recovery prevents all automatic reconnect and fallback work',async t=>{
+ for(const command of ['暂停寻找','取消']){const clock=searchClock(),sockets=[];let http=0;class Socket{constructor(){sockets.push(this);}close(){this.closed=true;}}
+ const {bridge}=visualFixture({visionStreamUrl:'wss://stream.test',WebSocket:Socket,searchClock:clock,fetch:async url=>{if(url==='/api/vision')http++;return Response.json({configured:true,authenticated:true});}});t.after(()=>bridge.close());say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);sockets[0].onerror();await settle();say(bridge,command);await clock.advance(60000);assert.equal(sockets.length,1);assert.equal(http,0);assert.equal(bridge.search.running,false);}
+});
+test('explicit stream rate limits pause with camera retained and no fallback attempts',async t=>{
+ const clock=searchClock(),sockets=[];let http=0;class Socket{constructor(){sockets.push(this);}close(){this.closed=true;}}
+ const {bridge}=visualFixture({visionStreamUrl:'wss://stream.test',WebSocket:Socket,searchClock:clock,fetch:async url=>{if(url==='/api/vision')http++;return Response.json({configured:true,authenticated:true});}});t.after(()=>bridge.close());say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);sockets[0].onmessage({data:JSON.stringify({type:'error',code:'rate_limited'})});await settle();assert.equal(bridge.search.state,'paused');assert.match(bridge.search.notice,/频繁/);assert.ok(bridge.videoId);await clock.advance(60000);assert.equal(sockets.length,1);assert.equal(http,0);
+});
+test('fallback failure stops retrying and retains the camera and search target',async t=>{
+ const clock=searchClock(),sockets=[];let http=0;class Socket{constructor(){sockets.push(this);}close(){}}
+ const {bridge,events}=visualFixture({visionStreamUrl:'wss://stream.test',WebSocket:Socket,searchClock:clock,fetch:async url=>url==='/api/vision'?(http++,new Response('failed',{status:503})):Response.json({configured:true,authenticated:true})});t.after(()=>bridge.close());
+ say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);sockets[0].onerror();await settle();await clock.advance(1500);await finishPicture(bridge);sockets[1].onerror();await settle();await clock.advance(1);await finishPicture(bridge);assert.equal(http,1);assert.equal(bridge.search.state,'paused');assert.equal(bridge.search.task.target,'水杯');assert.ok(bridge.videoId);assert.ok(!events.some(e=>e.type==='app.video_error'));await clock.advance(60000);assert.equal(http,1);
 });

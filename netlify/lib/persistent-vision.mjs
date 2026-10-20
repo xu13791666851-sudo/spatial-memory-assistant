@@ -8,7 +8,7 @@ export class PersistentVision{
     Object.assign(this,{connect,env,timeoutMs});this.closed=false;this.queue=[];
     this.ready=new Promise((resolve,reject)=>{this.readyResolve=resolve;this.readyReject=reject;});
     this.ready.catch(()=>{});
-    this.connectTimer=setTimeout(()=>this.close('observation_timeout'),10000);
+    this.connectTimer=setTimeout(()=>this.close('observation_connect_timeout'),18000);
     const host=env.DASHSCOPE_REGION==='singapore'?'ap-southeast-1':'cn-beijing';
     const url=env.DASHSCOPE_WORKSPACE_ID?`wss://${env.DASHSCOPE_WORKSPACE_ID}.${host}.maas.aliyuncs.com/api-ws/v1/realtime?model=${REALTIME_MODEL}`:`wss://${env.DASHSCOPE_REGION==='singapore'?'dashscope-intl.aliyuncs.com':'dashscope.aliyuncs.com'}/api-ws/v1/realtime?model=${REALTIME_MODEL}`;
     Promise.resolve().then(()=>connect(url,{headers:{Authorization:'Bearer '+env.DASHSCOPE_API_KEY},onMessage:raw=>this.event(raw),onError:()=>this.close('observation_network_error'),onClose:()=>this.close('observation_disconnected')})).then(socket=>{

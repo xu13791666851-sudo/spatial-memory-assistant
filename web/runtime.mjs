@@ -245,13 +245,15 @@ export function createRuntime(env){
       const scene=this.sceneCommit;
       if(!scene||scene.sent||this.closed||this.paused||this.listening)return;
       if(this.videoId!==scene.id||this.mediaGeneration!==scene.generation){this.sceneCommit=null;return;}
+      let stream;
       try{
         scene.sent=true;scene.controller=new AbortController();
         const streamUrl=env.visionStreamUrl??VISION_STREAM_URL;
-        const stream=scene.task?.scanId&&streamUrl?(this.visionStream||=new VisionStream({url:streamUrl,WebSocket:env.WebSocket||globalThis.WebSocket})):null;
+        stream=scene.task?.scanId&&streamUrl&&!this.search.fallback?(this.visionStream||=new VisionStream({url:streamUrl,WebSocket:env.WebSocket||globalThis.WebSocket,...env.visionStreamOptions})):null;
         if(stream)await stream.open(scene.controller.signal);
         if(this.closed||this.sceneCommit!==scene||this.paused)return;
-        const image=this.captureScene();this.search.requested();
+        if(stream)this.search.connected();
+        const image=this.captureScene();scene.observedAt=new Date().toISOString();this.search.requested();
         const deviceSpeech=!!document.getElementById('fast-describe')?.checked&&(env.supportsSpeech||document.getElementById('screen-reader-mode')?.checked);
         const requestId=crypto.randomUUID(),task=scene.task?{target:scene.task.target,remember:!!scene.task.saveToken,reference_appearance:scene.task.reference_appearance||''}:null;
         this.visualPending=true;this.suppressResponse=true;this.stopPlayback();
@@ -295,7 +297,15 @@ export function createRuntime(env){
         }
       }catch(err){
         if(this.closed||this.sceneCommit!==scene||this.videoId!==scene.id)return;
-        const message=err.message||'当前画面未能理解，请重新观察。';this.localSpeechToken=null;this.emit({type:'app.scene_cancel'});this.endVideo(message);this.emit({type:'app.video_error',message});
+        const message=err.message||'当前画面未能理解，请重新观察。';
+        if(scene.task?.scanId&&scene.task.scanId===this.search.id&&this.search.running){
+          this.visionStream?.close();this.visionStream=null;
+          scene.controller?.abort();this.sceneCommit=null;this.scene.stop();
+          this.visualPending=false;this.suppressResponse=false;this.localSpeechToken=null;this.emit({type:'app.scene_cancel'});this.updatePlayback();
+          if(stream&&err.retryable&&this.search.recover())return;
+          this.search.pause(message+' 寻找已暂停，可稍后继续或取消。');return;
+        }
+        this.localSpeechToken=null;this.emit({type:'app.scene_cancel'});this.endVideo(message);this.emit({type:'app.video_error',message});
       }
     }
     requestObservation(goal='',callId=null){

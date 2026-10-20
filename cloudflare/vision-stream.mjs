@@ -26,9 +26,9 @@ export function attachVisionSocket(socket,session,{limit,clock=()=>Date.now(),tt
       last=clock();frames++;ids.add(frame.request_id);
       const result=await session.observe(frame);if(closed)return;
       busy=false;send({type:'observation',request_id:frame.request_id,...result});
-    }catch(error){if(!closed){console.warn('vision_stream_failed',/^[a-z_]{1,80}$/.test(error?.message)?error.message:'unexpected_error');fail('stream_failed');}}
+    }catch(error){if(!closed){console.warn('vision_stream_failed',/^[a-z_]{1,80}$/.test(error?.message)?error.message:'unexpected_error');fail(/^(?:rate_limited|invalid_frame|invalid_task|frame_limit|target_changed|observation_[a-z_]+)$/.test(error?.message)?error.message:'stream_failed');}}
   });
-  session.ready.then(()=>send({type:'ready',protocol:1,min_interval_ms:2000})).catch(()=>fail('stream_unavailable'));
+  session.ready.then(()=>send({type:'ready',protocol:1,min_interval_ms:2000})).catch(error=>fail(error?.message==='observation_connect_timeout'?'observation_connect_timeout':'stream_unavailable'));
   return close;
 }
 

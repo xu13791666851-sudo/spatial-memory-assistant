@@ -75,3 +75,25 @@ test('browser stream rejects an old result instead of pairing it with a new fram
   let socket;class BrowserSocket{constructor(){socket=this;queueMicrotask(()=>this.onmessage({data:JSON.stringify({type:'ready',protocol:1})}));}send(){}close(){this.closed=true;}}
   const stream=new VisionStream({url:'wss://gateway.test',WebSocket:BrowserSocket}),pending=stream.observe(frame),check=assert.rejects(pending,/中断/);await stream.open();await settle();socket.onmessage({data:JSON.stringify({type:'observation',request_id:'old-frame'})});await check;assert.equal(socket.closed,true);
 });
+
+test('browser distinguishes connection readiness timeout from frame timeout and closes permanently',async()=>{
+  let socket;class BrowserSocket{constructor(){socket=this;}send(){}close(){this.closed=true;}}
+  const cold=new VisionStream({url:'wss://gateway.test',WebSocket:BrowserSocket,openTimeoutMs:10});
+  await assert.rejects(cold.open(),e=>e.code==='gateway_connect_timeout'&&e.retryable);assert.equal(socket.closed,true);
+  await assert.rejects(cold.open(),e=>e.code==='gateway_connect_timeout'&&e.retryable);
+  const model=new VisionStream({url:'wss://gateway.test',WebSocket:BrowserSocket,openTimeoutMs:10});const waiting=model.open();socket.onopen();
+  await assert.rejects(waiting,e=>e.code==='model_ready_timeout'&&e.retryable);
+  const ready=new VisionStream({url:'wss://gateway.test',WebSocket:BrowserSocket,timeoutMs:10});const opening=ready.open();socket.onmessage({data:JSON.stringify({type:'ready',protocol:1})});await opening;
+  await assert.rejects(ready.observe(frame),e=>e.code==='frame_timeout'&&e.retryable);
+});
+test('gateway rate-limit code reaches browser as a non-retryable error',async()=>{
+  const server=new Socket();attachVisionSocket(server,{ready:Promise.resolve(),close(){}},{limit:async()=>false});await server.message(frame);assert.equal(server.sent.at(-1).code,'rate_limited');
+  let socket;class BrowserSocket{constructor(){socket=this;}close(){}}
+  const stream=new VisionStream({url:'wss://gateway.test',WebSocket:BrowserSocket});const opening=stream.open();socket.onmessage({data:JSON.stringify(server.sent.at(-1))});await assert.rejects(opening,e=>e.code==='rate_limited'&&!e.retryable);
+});
+test('disconnect between frames remains retryable on the next observation',async()=>{
+  let socket;class BrowserSocket{constructor(){socket=this;}send(){}close(){}}
+  const stream=new VisionStream({url:'wss://gateway.test',WebSocket:BrowserSocket});const opening=stream.open();
+  socket.onmessage({data:JSON.stringify({type:'ready',protocol:1})});await opening;socket.onclose();
+  await assert.rejects(stream.observe(frame),e=>e.code==='network_error'&&e.retryable);
+});
