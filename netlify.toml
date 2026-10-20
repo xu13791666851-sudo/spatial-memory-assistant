@@ -27,13 +27,3 @@
   to = "/video/"
   status = 302
   force = true
-
-[[headers]]
-  for = "/*"
-  [headers.values]
-    Cache-Control = "no-store"
-    X-Content-Type-Options = "nosniff"
-    Referrer-Policy = "no-referrer"
-    X-Frame-Options = "DENY"
-    Permissions-Policy = "camera=(self), microphone=(self), geolocation=()"
-    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' wss://spatial-memory-vision-preview.xu13791666851.workers.dev; media-src 'self' blob:; frame-ancestors 'none'; form-action 'self'"

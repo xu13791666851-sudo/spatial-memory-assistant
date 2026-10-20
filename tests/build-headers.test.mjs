@@ -9,7 +9,7 @@ import {fileURLToPath} from 'node:url';
 test('Netlify build replaces cached Cloudflare headers with the current preview policy',async()=>{
   const root=fileURLToPath(new URL('../',import.meta.url)),temp=await fs.mkdtemp(path.join(os.tmpdir(),'spatial-headers-'));
   try{
-    for(const dir of ['src','web','designs'])await fs.symlink(path.join(root,dir),path.join(temp,dir));
+    for(const dir of ['src','web','designs','netlify'])await fs.symlink(path.join(root,dir),path.join(temp,dir));
     await fs.copyFile(path.join(root,'netlify.toml'),path.join(temp,'netlify.toml'));
     await fs.mkdir(path.join(temp,'dist'));await fs.writeFile(path.join(temp,'dist/_headers'),"/*\n  Content-Security-Policy: connect-src 'self'\n");
     execFileSync(process.execPath,[path.join(root,'scripts/build-netlify.mjs')],{cwd:temp});

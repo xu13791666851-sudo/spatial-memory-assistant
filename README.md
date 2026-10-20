@@ -300,7 +300,7 @@ GitHub 仓库用于保存和分享程序。GitHub Pages 只能托管静态网页
 - `cloudflare/vision-stream.mjs` 只开放找物请求，拒绝记忆写入、任意模型事件及切换目标复用会话。限制每帧大小、请求数、并发、连接时长及来源域名。无登录的公共测试站仍会消耗项目模型额度；来源检查不是用户身份认证。
 - `wrangler.vision-stream.jsonc` 对应原 Cloudflare 账号里的独立 `spatial-memory-vision-preview` Worker，不修改 `wrangler.jsonc` 对应正式站。仅允许测试版 8 Origin。连接握手每 IP 每分钟 6 次，帧请求每 IP 每分钟 40 次，单连接最多 60 帧、125 秒。不存储照片或识别历史。
 - 千问 API Key 通过 `wrangler secret put DASHSCOPE_API_KEY --config wrangler.vision-stream.jsonc` 配置，不能写进源代码。未提供业务空间时使用千问标准北京 WebSocket 接口；也支持服务端设置业务空间 ID。模型仍为 `qwen3.8-omni-flash-realtime`，显式设置支持的 Tina 音色，输出为文字。
-- 发布使用 `wrangler deploy --config wrangler.vision-stream.jsonc`，先检查 `/health` 和 WebSocket 实际接口，再将验证通过的 `wss://…/api/vision-stream` 写入 `web/vision-stream-config.mjs`，并仅把该主机加入 `netlify.toml` 的 `connect-src`。没有验证前保持地址为空，不替换正在使用的第一步。
+- 发布使用 `wrangler deploy --config wrangler.vision-stream.jsonc`，先检查 `/health` 和 WebSocket 实际接口，再将验证通过的 `wss://…/api/vision-stream` 写入 `web/vision-stream-config.mjs`，并仅把该主机加入 `netlify/preview-headers` 的 `connect-src`。没有验证前保持地址为空，不替换正在使用的第一步。
 - 已完成真实接口测试：一条连接连续传入“杯子示意图→空桌面→杯子示意图→空桌面”，均随新图变化，并收到每轮会话项删除确认。这四帧约 1.8–2.6 秒/帧；该测量不含手机到 Cloudflare 的延迟，不代表实物准确率或固定性能承诺。
 - 线上网关已通过健康检查、非法来源拒绝，以及单连接四张交替示意图验证，实测约 6–8 秒/帧。线上也观察到偶发超时；此时结束本轮、提示继续寻找，不返回旧结果。2 秒是最小请求间隔，实际反馈仍取决于网络与模型响应。
 - `tests/persistent-vision.test.mjs` 覆盖旧项删除屏障、并发拒绝、取消、超时、错误帧编号、来源限制、写入拒绝、限流和断线；`tests/vision-stream-browser.cjs` 在生成的手机页面验证同一连接的自动找物、两帧核对、停止及记忆不变。
