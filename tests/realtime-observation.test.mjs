@@ -83,3 +83,12 @@ test('HTTP appearance reference is bounded and upstream receives no historical l
  assert.equal(response.status,200);assert.equal((await response.json()).appearance_match.status,'match');
  const upstream=JSON.parse(f.sent[0].session.instructions.split('请求数据：')[1]);assert.deepEqual(upstream.task,{target:'杯子',remember:false,reference_appearance:'绿色杯身'});assert.ok(!f.sent[0].session.instructions.includes('private bedroom'));
 });
+
+test('unnamed identification survives HTTP and provider boundaries, with required visual name and selection evidence',async()=>{
+ const data={...evidence,objects:[...evidence.objects,{name:'金属六角扳手',position:'台灯旁'}],memory_candidate:{...evidence.memory_candidate,name:'金属六角扳手',selection_basis:'pointing'}};
+ const f=provider({data}),task={target:'所指物品',remember:true,identify:true};
+ const response=await understand(request({image:'/9j/AAAA',request_id:'request-123',task}),f.connect,env);assert.equal(response.status,200);const result=await response.json();assert.equal(result.memory_candidate.name,'金属六角扳手');assert.equal(result.memory_candidate.location_supported,true);
+ const upstream=JSON.parse(f.sent[0].session.instructions.split('请求数据：')[1]);assert.equal(upstream.task.identify,true);assert.match(f.sent[0].session.instructions,/不得沿用之前物品/);
+ for(const patch of [{name:'这个物品'},{name:'未在画面中的物品'},{selection_basis:'ambiguous'},{selection_basis:''}])assert.equal(validateObservation({...data,memory_candidate:{...data.memory_candidate,...patch}},task).memory_candidate.location_supported,false);
+ for(const identify of ['yes',true])assert.equal((await understand(request({image:'/9j/AAAA',request_id:'request-123',task:{target:'所指物品',remember:false,identify}}),()=>assert.fail('must not connect'),env)).status,400);
+});

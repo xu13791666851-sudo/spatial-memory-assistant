@@ -255,7 +255,7 @@ export function createRuntime(env){
         if(stream)this.search.connected();
         const image=this.captureScene();scene.observedAt=new Date().toISOString();this.search.requested();
         const deviceSpeech=!!document.getElementById('fast-describe')?.checked&&(env.supportsSpeech||document.getElementById('screen-reader-mode')?.checked);
-        const requestId=crypto.randomUUID(),task=scene.task?{target:scene.task.target,remember:!!scene.task.saveToken,reference_appearance:scene.task.reference_appearance||''}:null;
+        const requestId=crypto.randomUUID(),task=scene.task?{target:scene.task.target,remember:!!scene.task.saveToken,reference_appearance:scene.task.reference_appearance||'',...(scene.task.identify?{identify:true}:{})}:null;
         this.visualPending=true;this.suppressResponse=true;this.stopPlayback();
         const frame={image,goal:scene.goal,request_id:requestId,task};
         let payload;

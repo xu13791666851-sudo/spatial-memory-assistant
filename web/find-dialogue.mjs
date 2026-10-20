@@ -1,5 +1,6 @@
 import {normalizeName,sameType,rememberCommand,requestText,appearanceText,VisualEvidenceError,MemoryPersistenceError} from './memory.mjs';
 import {asksHistory} from './interaction.mjs';
+import {identifiedObjectName} from './realtime-observation.mjs';
 
 const clean=text=>String(text||'').trim().replace(/^(?:你好)?(?:小忆|小意|小易)[，,\s]*/,'').replace(/[。！？!?]+$/,'');
 const pronoun=name=>/^(?:我|它|他|她|这个|那个|这件|那件|物品|东西|这个物品|那个东西)?$/.test(name);
@@ -50,12 +51,18 @@ export function visualRememberIntent(text,focus=''){
   }
   if(rememberCommand(value))return null;
   value=value.replace(/^(?:重新|再次|再)(?=记住|更新|保存|记录)/,'');
-  if(/^更新到这里$/.test(value))return {name:focus};
+  if(/^更新到这里$/.test(value))return {name:focus,...(focus==='所指物品'?{identify:true}:{})};
   const match=value.match(/^(?:记住|更新|保存|记录)(?:一下)?[：:\s]*(.{0,60}?)(?:的)?(?:具体)?位置(?:到这里)?$/)
-    ||value.match(/^把(.{1,60}?)(?:的)?位置更新到这里$/);
+    ||value.match(/^把(.{1,60}?)(?:的)?位置更新到这里$/)
+    ||value.match(/^(?:记住|保存|记录)(?:一下)?(.{1,60})$/);
   if(!match)return /^记住/.test(value)?{name:''}:null;
   const name=normalizeName(match[1].replace(/^(?:之前|上次|刚才)(?:保存|记住|记录)的/,'').replace(/(?:(?:现在|当前|最新|新|移动后|移动之后)(?:的)?|的)+$/,''));
-  return {name:pronoun(name)?focus:focus&&sameType(focus,name)&&focus.length>=name.length?focus:name};
+  if(/^(?:这个|那个|这件|那件|这只|那只|物品|东西|物体|目标)$/.test(name)||/^(?:这个|那个|这件|那件)(?:物品|东西|物体)?$/.test(match[1])){
+    if(!/^(?:之前|上次|刚才)(?:保存|记住|记录)的/.test(match[1]))return {name:'所指物品',identify:true};
+  }
+  if(/(?:的)?(?:那个|那件|这个|这件)(?:东西|物品)?$/.test(name))return {name:'所指物品',identify:true,selector:name};
+  const target=pronoun(name)?focus:focus&&sameType(focus,name)&&focus.length>=name.length?focus:name;
+  return {name:target,...(target==='所指物品'?{identify:true}:{})};
 }
 export function searchTarget(text,focus=''){
   const location=locationQuery(text,focus);
@@ -82,7 +89,7 @@ export const searchFollowup=text=>{
     ||/^(?:看(?:一)?下|看看)?(?:这个)?(?:画面里|画面中|镜头里)(?:有|有没有)(?:了)?(?:吗|呢)?$/.test(value)
     ||/^(?:我)?(?:已经)?把(?:摄像头|镜头)对准(?:它|他|她|这个|那个)?(?:了)?$/.test(value);
 };
-const selection=text=>/^(?:是|要|记住)?(?:左边|右边|中间|最左边|最右边|前面|后面|靠近.{1,12}|旁边|蓝色|红色|绿色|透明)(?:的)?(?:那个|那只|那一个|杯子)?$/.test(clean(text));
+const selection=text=>!/(?:不要|不用|别|取消|为什么|他说|我说)/.test(clean(text))&&(/^(?:是|要|记住)?(?:左边|右边|中间|最左边|最右边|前面|后面|靠近.{1,12}|旁边)(?:的)?(?:那个|那只|那一个)?(?:.{1,20})?$/.test(clean(text))||/^(?:是|要|记住)?[^，。！？]{1,30}(?:的)?(?:那个|那只|那一个|这件|那件)$/.test(clean(text))||/^(?:是|要|记住)?[^，。！？]{1,8}色(?:的)?(?:那个|那只|那一个)$/.test(clean(text)));
 const cancelled=text=>/^(?:我找到了|找到了|不用找了|别找了|停止找物|取消|不用记了|不要记了|停止观察|关闭摄像头)$/.test(clean(text));
 
 // Only an explicit user request opens a short-lived write authorization.
@@ -104,7 +111,7 @@ export class FindDialogue{
       this.saving=null;
       if(place!=='home')return {kind:'answer',answer:'请先切换到家中场景，再让我记住物品位置。'};
       if(!save.name)return {kind:'answer',answer:'你想让我记住哪件物品的位置？请说出物品名称。'};
-      this.allowHistory=true;this.focus(save.name);this.saving={name:save.name,token:crypto.randomUUID(),expires:this.clock()+300000,selector:''};
+      this.allowHistory=true;this.focus(save.name);this.saving={name:save.name,identify:!!save.identify,token:crypto.randomUUID(),expires:this.clock()+300000,selector:save.selector||''};
       return this.observation();
     }
     if(this.saving&&(selection(text)||searchFollowup(text))){
@@ -153,7 +160,7 @@ export class FindDialogue{
     let reference_appearance='';
     if(!this.saving&&this.allowHistory){const records=this.memory.find(this.target);if(records.length===1){if(records[0].name.length>=this.target.length)this.target=records[0].name;this.objectId=records[0].object_id||records[0].id;reference_appearance=appearanceText(records[0].appearance);}}
     const target=this.target,save=this.saving;
-    return {kind:'observe',goal:`寻找${target}。${save?.selector?'用户选择：'+save.selector+'。':''}只描述当前可见证据。`,task:{target,allowHistory:this.allowHistory,saveToken:save?.token||null,selector:save?.selector||'',reference_appearance}};
+    return {kind:'observe',goal:`${save?.identify?'识别用户在画面中所指的物品，不沿用上一个物品名称':'寻找'+target}。${save?.selector?'用户选择：'+save.selector+'。':''}只描述当前可见证据。`,task:{target,allowHistory:this.allowHistory,saveToken:save?.token||null,selector:save?.selector||'',reference_appearance,...(save?.identify?{identify:true}:{})}};
   }
   complete(task,result){
     if(!task||task.target!==this.target)return {answer:result.answer};
@@ -161,9 +168,14 @@ export class FindDialogue{
       const pending=this.saving;
       if(!pending||pending.token!==task.saveToken||pending.expires<=this.clock()){this.saving=null;return {answer:'这次记录请求已取消或过期，没有保存。'};}
       const candidate=result.memory_candidate;
+      const name=pending.identify?identifiedObjectName(candidate,result.objects):pending.name;
+      if(pending.identify&&!name){
+        this.lastQuestion='请把要记住的物品靠近镜头或指给我看，也可以说“右边那个”或描述它的外观。';
+        return {answer:'还没有保存：尚未唯一确定你指的物品。'+this.lastQuestion,saved:false};
+      }
       if(result.target_visible===true&&candidate?.unique===true&&candidate.location_supported===true&&candidate.anchor&&candidate.location){
         let saved;
-        try{saved=this.memory.saveVisual(pending.name,candidate,result.observedAt);}
+        try{saved=this.memory.saveVisual(name,candidate,result.observedAt);}
         catch(error){
           if(error instanceof VisualEvidenceError){
             this.lastQuestion=`还没确认${pending.name}与参照物的位置关系。请把它和所在桌面或柜子一起拍清楚，再说“这样呢”。`;

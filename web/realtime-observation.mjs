@@ -1,5 +1,10 @@
 import {visualCandidateProblem,appearanceText} from './memory.mjs';
 
+export function identifiedObjectName(candidate,objects=[]){
+  const name=typeof candidate?.name==='string'?candidate.name.trim():'';
+  if(!name||name.length>60||/[\x00-\x1f]/.test(name)||/^(?:它|这个|那个|(?:这个|那个|所指)?(?:物品|东西|目标|物体))$/.test(name))return '';
+  return candidate.unique===true&&['pointing','closeup','single_object','user_description'].includes(candidate.selection_basis)&&Array.isArray(objects)&&objects.some(o=>o.name===name)?name:'';
+}
 // Evidence is model output, never authority to save. The caller owns consent,
 // scene identity, cancellation, and the actual storage transaction.
 export function validateObservation(result,task=null){
@@ -16,13 +21,13 @@ export function validateObservation(result,task=null){
   }
   return {answer:result.answer.trim(),objects,target_visible:typeof result.target_visible==='boolean'?result.target_visible:null,
     appearance_match,
-    memory_candidate:task?.remember&&raw&&typeof raw.unique==='boolean'?{unique:raw.unique,location_supported:!visualCandidateProblem(raw)&&!!knownAnchor(raw.anchor)&&!!short(raw.location,120),anchor:knownAnchor(raw.anchor)?raw.anchor:'',location:short(raw.location,120)?raw.location:'',appearance:appearanceText(raw.appearance)}:null,
+    memory_candidate:task?.remember&&raw&&typeof raw.unique==='boolean'?{unique:raw.unique,location_supported:!visualCandidateProblem(raw)&&!!knownAnchor(raw.anchor)&&!!short(raw.location,120)&&(!task.identify||!!identifiedObjectName(raw,objects)),name:short(raw.name,60)?raw.name.trim():'',selection_basis:['pointing','closeup','single_object','user_description'].includes(raw.selection_basis)?raw.selection_basis:'',anchor:knownAnchor(raw.anchor)?raw.anchor:'',location:short(raw.location,120)?raw.location:'',appearance:appearanceText(raw.appearance)}:null,
     next_step:task&&step?.kind==='reframe'&&knownAnchor(step.anchor)&&short(step.question,100)?{kind:'reframe',anchor:step.anchor,question:step.question}:null};
 }
 const str={type:'string'},bool={type:'boolean'};
 export const observationTool={type:'function',function:{name:'report_observation',description:'只提交本次实时视频的可见证据，不能保存记忆。',parameters:{type:'object',properties:{
   observation_id:str,frame_status:{type:'string',enum:['clear','uncertain']},answer:str,objects:{type:'array',items:{type:'object',properties:{name:str,position:str},required:['name','position']}},
-  target_visible:bool,memory_candidate:{type:'object',properties:{unique:bool,location_supported:bool,appearance:{type:'string',description:'150字以内，只记录目标实际可见的颜色、形状、杯盖/把手/图案等区分特征；不包含位置或周围物品，不从目标名称猜测，看不清则为空字符串'},anchor:{type:'string',description:'稳定参照物名称，与objects中的name完全相同'},location:{type:'string',description:'目标在承载面及参照物附近的位置，必须包含完整anchor原文；如anchor为笔记本电脑，则不能缩写成电脑'}},required:['unique','location_supported','anchor','location','appearance']},
+  target_visible:bool,memory_candidate:{type:'object',properties:{unique:bool,location_supported:bool,name:{type:'string',description:'从画面识别的具体物品名称，60字以内，与objects中的目标name完全一致，不可写这个物品或目标'},selection_basis:{type:'string',enum:['pointing','closeup','single_object','user_description','ambiguous'],description:'未提供名称时，说明如何唯一确定用户所指物品：明确指向、特写、唯一主体或用户描述；无法确定为ambiguous'},appearance:{type:'string',description:'150字以内，只记录目标实际可见的颜色、形状、结构、图案等区分特征；不包含位置或周围物品，不从目标名称猜测，看不清则为空字符串'},anchor:{type:'string',description:'稳定参照物名称，与objects中的name完全相同'},location:{type:'string',description:'目标在承载面及参照物附近的位置，必须包含完整anchor原文；如anchor为笔记本电脑，则不能缩写成电脑'}},required:['unique','location_supported','anchor','location','appearance']},
   appearance_match:{type:'object',properties:{status:{type:'string',enum:['match','different','uncertain','multiple']},unique:bool,reason:{type:'string',description:'200字以内，说明本次实际看见的特征如何与reference_appearance一致、冲突或哪些细节被遮挡；不得用历史位置证明匹配'}},required:['status','unique','reason']},
   next_step:{type:'object',properties:{kind:{type:'string',enum:['reframe']},anchor:str,question:str}}
 },required:['observation_id','frame_status','answer','objects'],additionalProperties:false}}};

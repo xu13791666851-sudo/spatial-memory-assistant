@@ -825,9 +825,9 @@ test('storage write failures name the actual item and never blame the remember c
   assert.match(lastAnswer(events),/浏览器未能读写/);assert.match(lastAnswer(events),/绿色水杯/);assert.doesNotMatch(lastAnswer(events),/重新说“记住这个物品/);assert.equal(runtime.memory.all().length,0);
  }
 });
-test('generic this item asks for identity when there is no active target',async()=>{
+test('generic this item starts fresh visual identification without requiring a name',async()=>{
  const {FindDialogue}=await import('../web/find-dialogue.mjs');const memory=new Memory(storage()),dialogue=new FindDialogue(memory);
- assert.match(dialogue.intent('帮我记住这个物品的位置','home').answer,/物品名称/);assert.equal(dialogue.saving,null);
+ const plan=dialogue.intent('帮我记住这个物品的位置','home');assert.equal(plan.kind,'observe');assert.equal(plan.task.identify,true);assert.ok(plan.task.saveToken);assert.equal(memory.all().length,0);
 });
 
 test('saved paper cup is recalled from natural typed and spoken questions without a camera or provider call',async t=>{
@@ -1127,4 +1127,28 @@ test('failed or cancelled fresh placement capture preserves the previous saved p
  let result=missingCup;const f=visualFixture({fetch:async url=>Response.json(url==='/api/vision'?result:{configured:true,authenticated:true})});t.after(()=>f.bridge.close());f.runtime.setPlace('home');f.runtime.memory.saveVisual('创可贴',candidate);say(f.bridge,'创可贴在哪');
  const before=f.data.getItem('spatial-memory.records.v1');say(f.bridge,'重新记住它的位置');await finishPicture(f.bridge);assert.match(lastAnswer(f.events),/还没有保存/);assert.equal(f.data.getItem('spatial-memory.records.v1'),before);
  say(f.bridge,'取消');say(f.bridge,'创可贴在哪');say(f.bridge,'更新它的位置');say(f.bridge,'取消');assert.equal(f.bridge.scene.config,null);assert.equal(f.data.getItem('spatial-memory.records.v1'),before);
+});
+
+test('unnamed visual memory identifies arbitrary objects, recalls and updates them without a category trigger list',async t=>{
+ for(const name of ['六角扳手','紫色拉链收纳袋','不规则陶瓷摆件']){
+  const requests=[];let location='木桌上，纸巾盒旁边';
+  const f=visualFixture({fetch:async(url,opts)=>{if(url==='/api/vision'){requests.push(JSON.parse(opts.body));return Response.json({...seenCup,answer:name+'在'+location,objects:[{name,position:'中间'},{name:'木桌',position:'下方'}],memory_candidate:{...candidate,name,selection_basis:'pointing',appearance:'形状与表面细节清楚可见',location}});}return Response.json({configured:true,authenticated:true});}});t.after(()=>f.bridge.close());f.runtime.setPlace('home');
+  f.runtime.memory.remember('记住，旧物品放在柜子里');say(f.bridge,'旧物品在哪');const original=f.runtime.memory.get('旧物品');
+  say(f.bridge,'帮我记住这个物品');await finishPicture(f.bridge);assert.equal(requests[0].task.identify,true);assert.equal(requests[0].task.target,'所指物品');assert.match(lastAnswer(f.events),/^已记住/);assert.ok(lastAnswer(f.events).includes(name));assert.equal(f.runtime.memory.get('旧物品').id,original.id);assert.equal(f.runtime.memory.all().length,2);assert.equal(f.runtime.memory.get('所指物品'),null);
+  const id=f.runtime.memory.get(name).object_id;say(f.bridge,'它在哪里');assert.ok(lastAnswer(f.events).includes(name+'在'+location));assert.equal(requests.length,1);
+  location='木桌另一端，台灯旁';say(f.bridge,'重新记住它的位置');await finishPicture(f.bridge);assert.equal(requests[1].task.target,name);assert.equal(requests[1].task.identify,undefined);assert.equal(f.runtime.memory.get(name).object_id,id);assert.equal(f.runtime.memory.get(name).location,location);
+  const reload=runtimeFixture({storage:f.data}).runtime;reload.setPlace('home');assert.ok((await reload.api('/api/command',{text:name+'在哪'})).answer.includes(location));
+ }
+});
+
+test('ambiguous unnamed objects require selection, invalid identification never saves, cancellation rejects late evidence',async()=>{
+ const {FindDialogue,visualRememberIntent}=await import('../web/find-dialogue.mjs');const m=new Memory(storage()),d=new FindDialogue(m);
+ for(const phrase of ['帮我记住这个','请保存这个东西的位置','记住右边那个']){const plan=visualRememberIntent(phrase,'旧目标');assert.equal(plan.identify,true,phrase);}
+ let plan=d.intent('帮我记住这个物品','home');const base={...seenCup,objects:[{name:'黄色拉链袋',position:'右侧'},{name:'木桌',position:'下方'}]};
+ for(const candidateOverride of [{name:'黄色拉链袋',unique:false,selection_basis:'ambiguous'},{name:'这个物品',selection_basis:'closeup'},{name:'编造的名称',selection_basis:'pointing'},{name:'黄色拉链袋'}]){
+  const result=d.complete(plan.task,{...base,memory_candidate:{...candidate,...candidateOverride}});assert.equal(result.saved,false);assert.equal(m.all().length,0);assert.ok(d.saving);
+ }
+ assert.equal(d.intent('重新记住它的位置','home').task.identify,true);plan=d.intent('带拉链的那个','home');assert.equal(plan.task.identify,true);assert.match(plan.goal,/带拉链的那个/);
+ const evidence={...base,memory_candidate:{...candidate,name:'黄色拉链袋',selection_basis:'user_description'}};assert.equal(d.complete(plan.task,evidence).saved,true);assert.equal(m.get('黄色拉链袋').location,candidate.location);
+ const before=JSON.stringify(m.rows());plan=d.intent('记住这个物品','home');d.intent('取消','home');d.complete(plan.task,evidence);assert.equal(JSON.stringify(m.rows()),before);
 });
