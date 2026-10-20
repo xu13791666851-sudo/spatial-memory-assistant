@@ -17,7 +17,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
  });
  await page.goto('https://ui.test/');await page.waitForFunction(()=>!!window.testUI);
  await page.evaluate(()=>document.getElementById('screen-reader-mode').checked=true);
- await page.selectOption('#place-mode','home');
+ await page.evaluate(()=>window.spatialRuntime.setPlace('home'));
  await page.evaluate(async()=>{
   const ui=window.testUI;await ui.handleCloud({type:'conversation.item.input_audio_transcription.completed',transcript:'帮我记住蓝色玻璃杯的位置'});
   await ui.handleCloud({type:'app.memory_result',answer:'已记住：蓝色玻璃杯在木桌上、纸巾盒旁边。',saved:true,items:[],pending:null});
@@ -31,7 +31,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
  assert.equal(await page.locator('#chat').getByText('重复朗读',{exact:true}).count(),0);
  assert.equal(await page.locator('.chat-tag').filter({hasText:'已存入物品记忆'}).count(),1);
  await page.click('#open-records');
- await page.evaluate(()=>window.testUI.setReady(true));assert.equal(await page.locator('#main-toggle').textContent(),'暂停');assert.ok(await page.locator('#end-conversation').isVisible());
+ await page.evaluate(()=>window.testUI.setReady(true));assert.equal(await page.locator('#main-toggle').textContent(),'重新观察');assert.equal(await page.locator('#end-conversation').isVisible(),false);
  await page.evaluate(()=>window.testUI.setReady(true,true));assert.equal(await page.locator('#main-toggle').textContent(),'继续');await page.evaluate(()=>window.testUI.setReady(false));
  const camera=await page.locator('#camera-preview').boundingBox();
  await page.evaluate(()=>{for(let i=0;i<20;i++)window.testUI.conversation.add('历史消息 '+i+'，这是一条可以回顾的对话记录。',i%2===0);});
@@ -41,8 +41,8 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
  await page.locator('#chat-jump').waitFor({state:'visible'});await page.click('#chat-jump');
  assert.ok(await page.locator('#chat').evaluate(e=>e.scrollTop>0));
  assert.deepEqual(await page.locator('#camera-preview').boundingBox(),camera);
- await page.click('#close-records');await page.click('#expand-video');assert.equal(await page.locator('body').getAttribute('data-layout'),'video');assert.equal(await page.locator('#chat').isVisible(),false);
- await page.click('#expand-video');await page.click('#open-records');await page.locator('.record-history').evaluate(e=>e.open=true);await page.click('#expand-chat');assert.equal(await page.locator('body').getAttribute('data-layout'),'home');assert.deepEqual(await page.locator('#camera-preview').boundingBox(),camera);
+ await page.click('#close-records');assert.equal(await page.locator('#chat').isVisible(),false);
+ await page.click('#open-records');await page.locator('.record-history').evaluate(e=>e.open=true);await page.click('#expand-chat');assert.deepEqual(await page.locator('#camera-preview').boundingBox(),camera);
  await page.click('#expand-chat');
  await page.screenshot({path:process.env.UI_SCREENSHOT||'/tmp/spatial-conversation-ui.png'});
  await page.reload();await page.waitForFunction(()=>!!window.testUI);await page.click('#open-records');assert.ok(await page.locator('#chat').getByText('刚刚到达的新回答',{exact:true}).isVisible());

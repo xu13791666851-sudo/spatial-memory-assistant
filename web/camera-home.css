@@ -1,0 +1,43 @@
+/* Camera-first shell. Loaded last so legacy dialogs and session hooks can stay. */
+:root{--bg:#f6f7fa;--ink:#172033;--accent:#1261e8;--line:#cbd5e1;--muted:#637087}
+body[data-page=assistant]{padding:0;background:#111318;color:var(--ink)}
+body[data-page=assistant] main.camera-app{position:absolute;inset:var(--visible-top,0px) 0 auto;transform:none;margin:0;width:100%;max-width:none;height:var(--app-height,100dvh);padding:0;gap:0;border:0;border-image:none;filter:none;background:#111318;display:flex;flex-direction:column;overflow:hidden}
+.camera-stage{position:relative;flex:1;min-height:0;overflow:hidden;background:#111318}
+body[data-page=assistant] .camera-full,body[data-page=assistant] .camera-full.collapsed{position:absolute;inset:0;width:100%;height:100%;min-height:0;border:0;border-image:none;border-radius:0;padding:0;margin:0;background:#111318;display:flex}
+body[data-page=assistant] .camera-full .preview,body[data-page=assistant] .camera-full.collapsed .preview{display:block;position:relative;width:100%;height:100%;background:#111318;border-radius:0;overflow:hidden}
+/* Show the complete captured frame: objects near an edge remain visible. */
+body[data-page=assistant] .camera-full video{width:100%;height:100%;object-fit:contain}
+body[data-page=assistant] .camera-heading,body[data-page=assistant] #expand-video,body[data-page=assistant] #camera-start-target,body[data-page=assistant] #video-again{display:none!important}
+body[data-page=assistant] #camera-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:70px 28px;background:radial-gradient(ellipse at 50% 35%,#273242 0,#141a23 55%,#111318 100%);color:#f5f7fb}
+body[data-page=assistant] #camera-empty[hidden]{display:none}
+body[data-page=assistant] #camera-empty::before{width:64px;height:52px;opacity:.75;background:none;border:2px solid #9aafc9;border-radius:14px;box-shadow:inset 0 0 0 12px #1e2835;content:''}
+body[data-page=assistant] #camera-empty p{font-size:20px;line-height:1.7;font-weight:500;margin:0;text-align:center}
+.camera-topline{position:absolute;top:calc(18px + env(safe-area-inset-top));left:20px;right:20px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;pointer-events:none;z-index:2}
+.camera-topline span{background:#0a0e17cf;color:#fff;border:1px solid #ffffff26;padding:8px 12px;border-radius:20px;font-size:14px;line-height:1.4;max-width:75%}
+#camera-session-status::before{content:'';display:inline-block;width:7px;height:7px;margin-right:7px;border-radius:50%;background:#9aa5b5}.camera-active #camera-session-status::before{background:#6ce4ac}
+.camera-topline #scene-label{color:#dae2ef;white-space:nowrap}
+.camera-caption{position:absolute;bottom:16px;left:20px;right:20px;max-width:620px;margin:auto;padding:14px 18px;background:#10151ee8;border:1px solid #ffffff1c;border-radius:16px;color:white;pointer-events:none}
+body[data-page=assistant] #latest-answer{margin:0;font-size:var(--answer-size,18px);font-weight:500;line-height:1.55;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;color:#fff}
+body[data-page=assistant] .camera-actions{display:grid;grid-template-columns:1fr 1fr;gap:14px;flex:none;padding:20px max(20px,calc((100vw - 680px)/2)) calc(22px + env(safe-area-inset-bottom));background:#1c1e23;border-radius:28px 28px 0 0;z-index:3;margin-top:-1px}
+body[data-page=assistant] .camera-actions button{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;min-height:76px;font-size:24px;font-weight:700;line-height:1.3;border-radius:22px;padding:16px 8px;grid-row:auto;grid-column:auto;filter:none;box-shadow:none;border:2px solid #f3f5fa;background:transparent;color:#fff;border-image:none}
+body[data-page=assistant] .camera-actions #main-toggle{background:#1261e8;border-color:#1261e8;color:#fff}
+body[data-page=assistant] button:focus-visible,body[data-page=assistant] summary:focus-visible{outline:3px solid #ffa947;outline-offset:4px}
+body[data-page=assistant] .notice{bottom:calc(130px + env(safe-area-inset-bottom));max-width:min(520px,calc(100vw - 32px));border-radius:14px;background:#28354d;color:#fff}
+.camera-stage #pending{position:absolute;z-index:4;bottom:16px;left:16px;right:16px;max-height:70%;overflow:auto;margin:0;background:#fff;border-radius:18px;box-shadow:0 8px 30px #0008;padding:18px;border:1px solid #d0d9e5}
+body[data-page=assistant] dialog{border:1px solid #d8e0eb;border-image:none;border-radius:22px;background:#f6f7fa;box-shadow:0 20px 80px #0004;color:var(--ink)}
+body[data-page=assistant] #records-dialog{inset:0;margin:auto;width:min(640px,calc(100vw - 20px));max-width:calc(100vw - 20px);height:calc(var(--app-height,100dvh) - 20px);max-height:calc(var(--app-height,100dvh) - 20px);padding:18px;background:#f6f7fa;border-image:none;border-radius:24px}
+.records-heading h2{font-size:26px}.records-heading button{min-height:44px}.record-tabs{border-radius:12px;min-height:48px}.record-tabs button{min-height:48px}
+.records-utilities{display:flex;gap:8px;flex-wrap:wrap;padding-top:12px;flex:none}.records-utilities #text-tools{margin:0}.records-utilities button,body[data-page=assistant] .records-utilities #text-tools summary{min-height:44px;font-size:14px;padding:8px 12px;background:#e9eef6;border:1px solid #cbd5e1;border-radius:10px;filter:none;grid-column:auto;grid-row:auto}
+.records-search{flex:none}.records-search #search-controls{padding:8px 0}.records-search #search-status{font-size:14px;line-height:1.4}
+body[data-page=assistant] .records-footer #pixel-records-home{border:0;border-image:none;background:#e4ecf9;border-radius:12px;min-height:48px;color:#23436f}
+body[data-page=assistant] .memory-item{border:1px solid #d4dce8;border-image:none;border-radius:16px;background:#fff}.chat-bubble{background:#e4edf9}.chat-turn.user .chat-bubble{background:#1261e8}.chat-turn.assistant .chat-speaker::before{display:none}
+body[data-page=assistant] #text-composer{background:#f6f7fa}
+@media(max-width:350px){body[data-page=assistant] .camera-actions{gap:10px;padding:16px 14px calc(18px + env(safe-area-inset-bottom))}body[data-page=assistant] .camera-actions button{font-size:20px;min-height:68px;border-radius:18px}.camera-topline{left:14px;right:14px}.camera-topline span{font-size:12px;padding:7px 9px}body[data-page=assistant] #records-dialog{padding:12px}.records-heading h2{font-size:23px}}
+@media(max-height:500px){body[data-page=assistant] .camera-actions{padding-top:10px;padding-bottom:calc(10px + env(safe-area-inset-bottom))}body[data-page=assistant] .camera-actions button{min-height:54px;font-size:20px;padding:10px}.camera-topline{top:10px}.camera-caption{bottom:8px;padding:8px 12px}body[data-page=assistant] #latest-answer{-webkit-line-clamp:2}.records-utilities{padding-top:4px}}
+[hidden],body[data-page=assistant] #session-support{display:none!important}
+
+body[data-page=assistant] .records-utilities #replay{width:auto;min-height:44px;font-size:14px;padding:8px 12px}
+/* Keep secondary actions reachable on short phones while chat takes the rest. */
+.records-utilities{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+body[data-page=assistant] .records-utilities button,body[data-page=assistant] .records-utilities #text-tools summary{width:100%;min-width:0;min-height:48px;height:100%;margin:0;padding:6px;font-size:12px;line-height:1.4;justify-content:center}
+.records-utilities #text-tools summary .pixel-icon{display:none}
