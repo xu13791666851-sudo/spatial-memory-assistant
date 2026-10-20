@@ -1000,3 +1000,26 @@ test('manual replay pauses an in-flight search and cannot strand its scheduler i
  const clock=searchClock();let finish;const {bridge,events}=visualFixture({searchClock:clock,fetch:async url=>url==='/api/vision'?await new Promise(resolve=>finish=resolve):Response.json({configured:true,authenticated:true})});t.after(()=>bridge.close());
  say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);bridge.replayAnswer('上次记录的位置');assert.equal(bridge.search.state,'paused');finish(Response.json(seenCup));await settle();assert.ok(!events.some(e=>e.type==='app.scene_fallback'));
 });
+
+test('phase two captures only after connection readiness, reuses it and closes automatically on confirmed find',async t=>{
+ const clock=searchClock(),sockets=[],frames=[];let captures=0,http=0;
+ class StreamSocket{
+  constructor(){sockets.push(this);}
+  ready(){this.onmessage({data:JSON.stringify({type:'ready',protocol:1})});}
+  send(raw){frames.push(JSON.parse(raw));}
+  complete(result){this.onmessage({data:JSON.stringify({type:'observation',request_id:frames.at(-1).request_id,frame_received:true,frame_status:'clear',...result})});}
+  close(){this.closed=true;}
+ }
+ const {bridge,events}=visualFixture({visionStreamUrl:'wss://stream.test/api/vision-stream',WebSocket:StreamSocket,searchClock:clock,captureFrame:()=>{captures++;return '/9j/current-'+captures;},fetch:async url=>{if(url==='/api/vision')http++;return Response.json({configured:true,authenticated:true});}});t.after(()=>bridge.close());
+ say(bridge,'帮我找水杯');await clock.advance(1000);await finishPicture(bridge);assert.equal(sockets.length,1);assert.equal(captures,0);
+ sockets[0].ready();await settle();assert.equal(captures,1);sockets[0].complete(missingCup);await settle();
+ await clock.advance(2000);await finishPicture(bridge);assert.equal(captures,2);sockets[0].complete(seenCup);await settle();assert.equal(bridge.search.state,'confirming');
+ await clock.advance(2000);await finishPicture(bridge);sockets[0].complete(seenCup);await settle();assert.equal(bridge.search.state,'found');assert.equal(sockets[0].closed,true);assert.equal(sockets.length,1);assert.equal(http,0);assert.equal(new Set(frames.map(f=>f.image)).size,3);assert.match(lastAnswer(events),/看到了符合/);
+});
+test('phase two pause during handshake prevents capture and resume opens a new isolated connection',async t=>{
+ const clock=searchClock(),sockets=[];let captures=0;
+ class StreamSocket{constructor(){sockets.push(this);}close(){this.closed=true;}}
+ const {bridge}=visualFixture({visionStreamUrl:'wss://stream.test',WebSocket:StreamSocket,searchClock:clock,captureFrame:()=>{captures++;return '/9j/AAAA';}});t.after(()=>bridge.close());
+ say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);say(bridge,'暂停寻找');assert.equal(sockets[0].closed,true);await settle();assert.equal(captures,0);
+ say(bridge,'继续找');await clock.advance(1000);await finishPicture(bridge);assert.equal(sockets.length,2);assert.equal(captures,0);say(bridge,'取消');assert.equal(sockets[1].closed,true);
+});

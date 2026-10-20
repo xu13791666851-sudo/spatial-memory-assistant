@@ -13,7 +13,7 @@ export function continuousTarget(text,focus=''){
 export class ContinuousSearch{
   constructor({observe,onState=()=>{},onExpire=()=>{},clock=()=>Date.now(),setTimer=(fn,ms)=>setTimeout(fn,ms),clearTimer=id=>clearTimeout(id)}={}){
     Object.assign(this,{observe,onState,onExpire,clock,setTimer,clearTimer});
-    this.state='idle';this.serial=0;this.lastRequest=-Infinity;
+    this.state='idle';this.intervalMs=8000;this.serial=0;this.lastRequest=-Infinity;
   }
   snapshot(){return {state:this.state,target:this.task?.target||null};}
   publish(){this.onState(this.snapshot());}
@@ -29,7 +29,7 @@ export class ContinuousSearch{
     this.timer=this.setTimer(()=>{
       if(!this.running||id!==this.id)return;
       if(this.observe(this.goal,this.task)===false)this.schedule(1000);
-    },Math.max(delay,8000-(this.clock()-this.lastRequest)));
+    },Math.max(delay,this.intervalMs-(this.clock()-this.lastRequest)));
   }
   requested(){this.lastRequest=this.clock();}
   accept(result,frameStatus){

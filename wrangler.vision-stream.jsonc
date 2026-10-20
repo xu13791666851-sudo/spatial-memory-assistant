@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "spatial-memory-vision-preview",
+  "account_id": "e72be7d2513d32ec4fd7b10faecb596d",
+  "main": "cloudflare/vision-stream.mjs",
+  "compatibility_date": "2026-10-19",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "ALLOWED_ORIGIN": "https://deploy-preview-8--spatial-memory-xuziyi.netlify.app",
+    "DASHSCOPE_REGION": "beijing"
+  },
+  "ratelimits": [
+    {"name":"STREAM_CONNECTION_LIMITER","namespace_id":"197270201","simple":{"limit":6,"period":60}},
+    {"name":"STREAM_FRAME_LIMITER","namespace_id":"197270202","simple":{"limit":40,"period":60}}
+  ]
+}

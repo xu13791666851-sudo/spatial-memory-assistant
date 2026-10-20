@@ -19,7 +19,7 @@ for(const name of ['retro-pixel-ui.svg','retro-pixel-home.svg','retro-pixel-reco
 await fs.copyFile(path.join(root,'web/memory.mjs'),path.join(dist,'static/memory.mjs'));
 await fs.copyFile(path.join(root,'web/find-dialogue.mjs'),path.join(dist,'static/find-dialogue.mjs'));
 await fs.copyFile(path.join(root,'web/runtime.mjs'),path.join(dist,'static/runtime.mjs'));
-for(const name of ['continuous-search','realtime-observation','interaction','wake','context','stream','scene-speech','person-context','conversation','unified-home','interface-commands'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
+for(const name of ['vision-stream','vision-stream-config','continuous-search','realtime-observation','interaction','wake','context','stream','scene-speech','person-context','conversation','unified-home','interface-commands'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
 let js=await fs.readFile(path.join(root,'src/static/app.js'),'utf8');
 js=js.replace("const PAGE=document.body.dataset.page;","import {runtime} from './runtime.mjs';\nlet PAGE=document.body.dataset.page;\nawait runtime.loaded;");
 js=js.replace("const res=await fetch(path,", "if(window.spatialRuntime)return window.spatialRuntime.api(path,body,method);\n const res=await fetch(path,");

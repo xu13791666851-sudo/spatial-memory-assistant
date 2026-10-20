@@ -1,3 +1,5 @@
+import {VisionStream} from './vision-stream.mjs';
+import {VISION_STREAM_URL} from './vision-stream-config.mjs';
 import {ContinuousSearch,continuousTarget} from './continuous-search.mjs';
 import {FindDialogue,searchTarget,locationQuery,asksCurrentView} from './find-dialogue.mjs';
 import {Memory,rememberCommand} from './memory.mjs';
@@ -56,7 +58,7 @@ export function createRuntime(env){
           if(this.listening||this.awaitingTranscript||this.active||this.replyPending||this.localSpeechToken||this.queuedReply||this.sceneCommit)return false;
           this.requestCurrentView(goal,task);return true;
         },
-        onState:state=>this.emit({type:'app.search_state',...state}),
+        onState:state=>{if(!['searching','confirming'].includes(state.state)){this.visionStream?.close();this.visionStream=null;}this.emit({type:'app.search_state',...state});},
         onExpire:()=>this.dialogueAnswer('这轮寻找已暂停，还没有确认找到。可以换个区域，再说“继续找”。')});
       queueMicrotask(()=>{if(!this.closed)this.onopen?.();});
     }
@@ -112,7 +114,7 @@ export function createRuntime(env){
           plan=dialogue.observation();context.focus=dialogue.target;
           const hint=records.length===1?'上次记录在'+records[0].location+'。':'';
           this.dialogueAnswer(hint+'开始寻找'+dialogue.target+'。请缓慢移动镜头，在每个区域停留一会儿，找到后我会提醒你。说“暂停寻找”或“取消”可以停止。');
-          this.search.start(plan);return true;
+          this.search.intervalMs=(env.visionStreamUrl??VISION_STREAM_URL)?2000:8000;this.search.start(plan);return true;
         }
         plan=dialogue.intent(text,context.place);
       }catch{this.dialogueAnswer('本机记忆暂时无法读取，请检查浏览器存储。');return true;}
@@ -244,16 +246,26 @@ export function createRuntime(env){
       if(!scene||scene.sent||this.closed||this.paused||this.listening)return;
       if(this.videoId!==scene.id||this.mediaGeneration!==scene.generation){this.sceneCommit=null;return;}
       try{
-        const image=this.captureScene();this.search.requested();scene.sent=true;scene.controller=new AbortController();
+        scene.sent=true;scene.controller=new AbortController();
+        const streamUrl=env.visionStreamUrl??VISION_STREAM_URL;
+        const stream=scene.task?.scanId&&streamUrl?(this.visionStream||=new VisionStream({url:streamUrl,WebSocket:env.WebSocket||globalThis.WebSocket})):null;
+        if(stream)await stream.open(scene.controller.signal);
+        if(this.closed||this.sceneCommit!==scene||this.paused)return;
+        const image=this.captureScene();this.search.requested();
         const deviceSpeech=!!document.getElementById('fast-describe')?.checked&&(env.supportsSpeech||document.getElementById('screen-reader-mode')?.checked);
         const requestId=crypto.randomUUID(),task=scene.task?{target:scene.task.target,remember:!!scene.task.saveToken,reference_appearance:scene.task.reference_appearance||''}:null;
         this.visualPending=true;this.suppressResponse=true;this.stopPlayback();
-        const response=await fetcher('/api/vision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image,goal:scene.goal,request_id:requestId,task}),signal:scene.controller.signal});
-        if(!response.ok){
-          if(response.status===429)throw Error('观察请求较频繁，已暂停。稍等片刻后说“继续找”。');
-          const error=await response.json().catch(()=>({}));throw Error(error.detail||'这次画面理解没有完成，请重新观察。');
+        const frame={image,goal:scene.goal,request_id:requestId,task};
+        let payload;
+        if(stream)payload=await stream.observe(frame,scene.controller.signal);
+        else{
+          const response=await fetcher('/api/vision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(frame),signal:scene.controller.signal});
+          if(!response.ok){
+            if(response.status===429)throw Error('观察请求较频繁，已暂停。稍等片刻后说“继续找”。');
+            const error=await response.json().catch(()=>({}));throw Error(error.detail||'这次画面理解没有完成，请重新观察。');
+          }
+          payload=await response.json();
         }
-        const payload=await response.json();
         if(payload.request_id!==requestId||payload.frame_received!==true||!['clear','uncertain'].includes(payload.frame_status))throw Error('这次没有获取到匹配的画面结果，请重新观察。');
         const result=validateObservation(payload,task);
         if(this.closed||this.paused||this.sceneCommit!==scene||this.videoId!==scene.id||this.mediaGeneration!==scene.generation)return;

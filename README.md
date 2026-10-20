@@ -290,6 +290,18 @@ GitHub 仓库用于保存和分享程序。GitHub Pages 只能托管静态网页
 
 页面提供暂停/继续、取消按钮，也支持对应口令。用户说话、重播、暂停对话或关闭摄像头会暂停寻找；切换场景、结束对话、离开页面会取消。超时、接口失败或限流停止本轮请求，晚到结果不能播报或保存。“继续找”重新开始一轮，并重新核对两张新画面。
 
-第二步（尚未上线）：保持一条专用的服务端视觉 WebSocket 会话，复用连接以减少每帧握手延迟。调度器 `web/continuous-search.mjs` 与拍摄/请求分开；后续替换传输层时保留取消、目标版本、两帧确认和写入授权约束。需要支持长期 WebSocket 的托管入口；Netlify 当前请求式函数不能直接承担长期连接网关。按千问官方文档，WebRTC 只支持服务端 VAD，不能用静音轨道加手动 `response.create` 冒充受支持的持续视觉协议。第二步验收还需验证缓冲区清理、旧帧不回流、断线重连及真实手机延迟，再开放自动识别。
+第二步已实现，部署启用以 `web/vision-stream-config.mjs` 的地址配置为准；地址为空时保留第一步。独立 Cloudflare Worker 为每轮寻找维护一条专用视觉 WebSocket，网页仍使用测试版 8。建立连接后才采集第一张新帧；请求完成后再取下一帧，起点至少间隔 2 秒。每帧返回后删除该轮输入及输出会话项，收到全部删除确认后才交付结果和接受下一帧。缺少确认、没有图像 token、标识不匹配或超时均关闭连接，不使用旧结果。两次连续匹配后主动播报，暂停、换目标或找到时关闭连接；断线后说“继续找”建立新会话。记忆保存和单次提问继续走原有独立观察接口。
 
 第一步验收：目标先不在镜头内，只说一次找物；随后移入目标，自动核对两张新帧后播报。覆盖换目标、取消后晚到结果、慢请求不并发、外观冲突、历史查询不启动识别、手机窄屏按钮与记忆不变。自动化使用模拟视觉结果验证流程；真实纸杯/水杯的识别效果须在测试入口用设备验证。
+
+
+### 第二步部署与验证
+
+- `cloudflare/vision-stream.mjs` 只开放找物请求，拒绝记忆写入、任意模型事件及切换目标复用会话。限制每帧大小、请求数、并发、连接时长及来源域名。无登录的公共测试站仍会消耗项目模型额度；来源检查不是用户身份认证。
+- `wrangler.vision-stream.jsonc` 对应原 Cloudflare 账号里的独立 `spatial-memory-vision-preview` Worker，不修改 `wrangler.jsonc` 对应正式站。仅允许测试版 8 Origin。连接握手每 IP 每分钟 6 次，帧请求每 IP 每分钟 40 次，单连接最多 60 帧、125 秒。不存储照片或识别历史。
+- 千问 API Key 通过 `wrangler secret put DASHSCOPE_API_KEY --config wrangler.vision-stream.jsonc` 配置，不能写进源代码。未提供业务空间时使用千问标准北京 WebSocket 接口；也支持服务端设置业务空间 ID。模型仍为 `qwen3.8-omni-flash-realtime`，显式设置支持的 Tina 音色，输出为文字。
+- 发布使用 `wrangler deploy --config wrangler.vision-stream.jsonc`，先检查 `/health` 和 WebSocket 实际接口，再将验证通过的 `wss://…/api/vision-stream` 写入 `web/vision-stream-config.mjs`，并仅把该主机加入 `netlify.toml` 的 `connect-src`。没有验证前保持地址为空，不替换正在使用的第一步。
+- 已完成真实接口测试：一条连接连续传入“杯子示意图→空桌面→杯子示意图→空桌面”，均随新图变化，并收到每轮会话项删除确认。这四帧约 1.8–2.6 秒/帧；该测量不含手机到 Cloudflare 的延迟，不代表实物准确率或固定性能承诺。
+- `tests/persistent-vision.test.mjs` 覆盖旧项删除屏障、并发拒绝、取消、超时、错误帧编号、来源限制、写入拒绝、限流和断线；`tests/vision-stream-browser.cjs` 在生成的手机页面验证同一连接的自动找物、两帧核对、停止及记忆不变。
+
+协议依据：[千问 Realtime](https://help.aliyun.com/en/model-studio/realtime)、[客户端事件](https://help.aliyun.com/en/model-studio/client-events)、[Cloudflare WebSocket](https://developers.cloudflare.com/workers/runtime-apis/websockets/)。会话项删除能力另以真实接口回执验证，不能仅从模型文本推断清理成功。
