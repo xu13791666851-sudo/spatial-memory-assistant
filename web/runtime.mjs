@@ -1,3 +1,4 @@
+import {ContinuousSearch,continuousTarget} from './continuous-search.mjs';
 import {FindDialogue,searchTarget,locationQuery,asksCurrentView} from './find-dialogue.mjs';
 import {Memory,rememberCommand} from './memory.mjs';
 import {ObservationGate,asksHistory,currentViewIntent} from './interaction.mjs';
@@ -49,6 +50,14 @@ export function createRuntime(env){
       this.channels=new Set();this.calls=new Set();this.replayResponses=new Set();this.replayItems=new Set();this.requestController=new AbortController();this.mediaGeneration=0;this.videoId=null;
       this.scene=new (env.ObservationGate||ObservationGate)({requireTransmission:false,settleMs:100,pollMs:80});this.lastUserText='';this.sceneGoal='';this.lastObservedAt=null;this.replyPending=false;this.listening=false;activeBridge=this;
       this.audio=document.getElementById('remote-audio');
+      this.search=new ContinuousSearch({...env.searchClock,
+        observe:(goal,task)=>{
+          if(this.closed||this.paused||document.hidden){this.search.pause();return true;}
+          if(this.listening||this.awaitingTranscript||this.active||this.replyPending||this.localSpeechToken||this.queuedReply||this.sceneCommit)return false;
+          this.requestCurrentView(goal,task);return true;
+        },
+        onState:state=>this.emit({type:'app.search_state',...state}),
+        onExpire:()=>this.dialogueAnswer('这轮寻找已暂停，还没有确认找到。可以换个区域，再说“继续找”。')});
       queueMicrotask(()=>{if(!this.closed)this.onopen?.();});
     }
     emit(event){if(!this.closed)this.onmessage?.({data:JSON.stringify(event)});}
@@ -62,7 +71,7 @@ export function createRuntime(env){
     }
     handleRemember(text){
       if(this.paused||!hasMemory(this.mode)||!rememberCommand(text))return false;
-      dialogue.saving=null;this.cancelObservation();
+      dialogue.saving=null;this.search.stop();this.cancelObservation();
       this.suppressResponse=true;this.queuedReply=null;this.replyPending=false;this.heldEvents=[];
       this.stopPlayback();this.control({type:'response.cancel'});
       let result;
@@ -73,6 +82,7 @@ export function createRuntime(env){
       return true;
     }
     cancelObservation(){
+      if(this.search.state==='found')this.search.stop();else this.search.pause();
       this.scene.stop();this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.sceneTask=null;
       if(this.observationCall){this.toolResult(this.observationCall.id,{camera_active:false,error:'用户已提出新的请求。'});this.observationCall=null;}
       this.visualPending=false;this.localSpeechToken=null;this.emit({type:'app.scene_cancel'});
@@ -86,11 +96,31 @@ export function createRuntime(env){
     }
     handleDialogue(text){
       if(this.paused||!hasMemory(this.mode))return false;
+      const command=String(text).trim().replace(/[。！？!?]+$/,'');
+      if(/^(?:暂停寻找|暂停找物|暂停找)$/.test(command)){
+        this.dialogueAnswer('已暂停寻找。说“继续找”可以继续，说“取消”可以结束。');return true;
+      }
+      const resume=/^(?:继续找|继续寻找|恢复寻找)$/.test(command)&&this.search.task;
+      const scanTarget=continuousTarget(text,dialogue.target);
       let plan;
-      try{plan=dialogue.intent(text,context.place);}catch{this.dialogueAnswer('本机记忆暂时无法读取，请检查浏览器存储。');return true;}
+      try{
+        if(hasVideo(this.mode)&&(resume||scanTarget)){
+          if(resume){dialogue.saving=null;dialogue.focus(this.search.task.target);dialogue.allowHistory=this.search.task.allowHistory;}
+          if(scanTarget){dialogue.saving=null;dialogue.focus(scanTarget);dialogue.allowHistory=context.place==='home';}
+          const records=dialogue.allowHistory?memory.find(dialogue.target):[];
+          if(records.length>1){dialogue.choices=records;this.search.stop();this.dialogueAnswer(memory.answer(dialogue.target)+' 请说出要找的具体物品，再说“帮我找”。');return true;}
+          plan=dialogue.observation();context.focus=dialogue.target;
+          const hint=records.length===1?'上次记录在'+records[0].location+'。':'';
+          this.dialogueAnswer(hint+'开始寻找'+dialogue.target+'。请缓慢移动镜头，在每个区域停留一会儿，找到后我会提醒你。说“暂停寻找”或“取消”可以停止。');
+          this.search.start(plan);return true;
+        }
+        plan=dialogue.intent(text,context.place);
+      }catch{this.dialogueAnswer('本机记忆暂时无法读取，请检查浏览器存储。');return true;}
       if(!plan)return false;
+      if(dialogue.saving||(this.search.task&&dialogue.target!==this.search.task.target))this.search.stop();
       if(dialogue.target)context.focus=dialogue.target;
       if(plan.kind==='cancel'){
+        this.search.stop();
         this.dialogueAnswer(plan.answer);
         if(/关闭摄像头|停止观察/.test(text)){this.endVideo('已停止观察。');this.emit({type:'app.camera_close'});}
       }else if(plan.kind==='observe'){
@@ -100,6 +130,7 @@ export function createRuntime(env){
       return true;
     }
     placeChanged(){
+      this.search.stop();
       this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.scene.stop();
       if(this.observationCall){this.toolResult(this.observationCall.id,{camera_active:false,error:'使用场景已切换，请重新观察。'});this.observationCall=null;}
       clearTimeout(this.sceneInstructionTimer);this.pendingInstructions=false;this.queuedReply=null;this.sceneTask=null;
@@ -154,6 +185,7 @@ export function createRuntime(env){
     }
     replayAnswer(text){
       if(this.closed||this.paused||typeof text!=='string'||!text.trim())return false;
+      this.search.pause();
       this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.scene.stop();
       this.localSpeechToken=null;this.visualPending=false;this.suppressResponse=false;
       this.emit({type:'app.scene_cancel'});this.stopPlayback();
@@ -212,17 +244,26 @@ export function createRuntime(env){
       if(!scene||scene.sent||this.closed||this.paused||this.listening)return;
       if(this.videoId!==scene.id||this.mediaGeneration!==scene.generation){this.sceneCommit=null;return;}
       try{
-        const image=this.captureScene();scene.sent=true;scene.controller=new AbortController();
+        const image=this.captureScene();this.search.requested();scene.sent=true;scene.controller=new AbortController();
         const deviceSpeech=!!document.getElementById('fast-describe')?.checked&&(env.supportsSpeech||document.getElementById('screen-reader-mode')?.checked);
         const requestId=crypto.randomUUID(),task=scene.task?{target:scene.task.target,remember:!!scene.task.saveToken,reference_appearance:scene.task.reference_appearance||''}:null;
         this.visualPending=true;this.suppressResponse=true;this.stopPlayback();
         const response=await fetcher('/api/vision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image,goal:scene.goal,request_id:requestId,task}),signal:scene.controller.signal});
-        if(!response.ok){const error=await response.json();throw Error(error.detail||'这次画面理解没有完成，请重新观察。');}
+        if(!response.ok){
+          if(response.status===429)throw Error('观察请求较频繁，已暂停。稍等片刻后说“继续找”。');
+          const error=await response.json().catch(()=>({}));throw Error(error.detail||'这次画面理解没有完成，请重新观察。');
+        }
         const payload=await response.json();
         if(payload.request_id!==requestId||payload.frame_received!==true||!['clear','uncertain'].includes(payload.frame_status))throw Error('这次没有获取到匹配的画面结果，请重新观察。');
         const result=validateObservation(payload,task);
         if(this.closed||this.paused||this.sceneCommit!==scene||this.videoId!==scene.id||this.mediaGeneration!==scene.generation)return;
         if(typeof result.answer!=='string'||!result.answer.trim())throw Error('当前画面未能理解。');
+        if(scene.task?.scanId){
+          if(scene.task.scanId!==this.search.id||!this.search.running)return;
+          if(!this.search.accept(result,payload.frame_status)){
+            this.sceneCommit=null;this.visualPending=false;this.suppressResponse=false;this.updatePlayback();return;
+          }
+        }
         let outcome={answer:result.answer};
         if(scene.task)outcome=dialogue.complete(scene.task,{...result,observedAt:scene.observedAt});
         const answer=outcome.answer;
@@ -325,6 +366,7 @@ export function createRuntime(env){
       }
       if(event.type==='error'){this.emit({type:'app.error',message:'千问未能完成请求，请核对配置、权限或余额后重新开始。'});this.close();return;}
       if(event.type==='input_audio_buffer.speech_started'){
+        this.search.pause();
         this.replaying=false;this.listening=true;this.awaitingTranscript=true;this.userSpoke=true;if(this.queuedReply?.automatic)this.queuedReply=null;
         if(this.sceneCommit){this.sceneCommit.controller?.abort();this.sceneCommit=null;}
         this.scene.stop();this.localSpeechToken=null;this.visualPending=false;this.emit({type:'app.scene_cancel'});
@@ -429,6 +471,7 @@ export function createRuntime(env){
     }
     clearVideoTrack(){this.mediaGeneration++;this.videoTrack?.stop();this.videoTrack=null;this.videoSender?.replaceTrack(null).catch(()=>{});}
     endVideo(message){
+      this.search.pause();
       if(this.sceneCommit){this.localSpeechToken=null;this.visualPending=false;this.suppressResponse=true;this.control({type:'response.cancel'});this.emit({type:'app.scene_cancel'});}
       dialogue.saving=null;this.sceneTask=null;
       const id=this.videoId;this.videoId=null;clearTimeout(this.videoTimer);this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.scene.stop();this.clearVideoTrack();
@@ -439,14 +482,14 @@ export function createRuntime(env){
     stopPlayback(){this.audio.muted=true;}
     updatePlayback(){this.audio.muted=this.paused||this.visualPending||this.awaitingTranscript||!!document.getElementById('screen-reader-mode')?.checked;}
     close(){
-      if(this.closed)return;dialogue.saving=null;this.closed=true;this.localSpeechToken=null;this.readyState=3;this.requestController.abort();clearTimeout(this.sessionTimer);clearTimeout(this.videoTimer);clearTimeout(this.photoTimer);clearTimeout(this.sceneInstructionTimer);this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.pendingInstructions=false;this.scene.stop();this.queuedReply=null;this.observationCall=null;this.clearVideoTrack();
+      if(this.closed)return;this.search.stop();dialogue.saving=null;this.closed=true;this.localSpeechToken=null;this.readyState=3;this.requestController.abort();clearTimeout(this.sessionTimer);clearTimeout(this.videoTimer);clearTimeout(this.photoTimer);clearTimeout(this.sceneInstructionTimer);this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.pendingInstructions=false;this.scene.stop();this.queuedReply=null;this.observationCall=null;this.clearVideoTrack();
       for(const c of this.channels){try{c.close();}catch{}}
       this.pc?.close();this.audio.pause();this.audio.srcObject=null;this.audio.hidden=true;
       if(activeBridge===this)activeBridge=null;
       queueMicrotask(()=>this.onclose?.());
     }
   }
-  return {loaded:loadAccess(),Bridge,memory,taskState:()=>dialogue.summary(),place:()=>context.place,setPlace,status:()=>({token:'browser-local',configured:!!settings.configured&&!!settings.authenticated,fixedKey:true,serverConfigured:!!settings.configured,workspace:'',region:'beijing',place:context.place}),
+  return {loaded:loadAccess(),Bridge,memory,taskState:()=>({...dialogue.summary(),search:activeBridge?.search.snapshot()||null}),place:()=>context.place,setPlace,status:()=>({token:'browser-local',configured:!!settings.configured&&!!settings.authenticated,fixedKey:true,serverConfigured:!!settings.configured,workspace:'',region:'beijing',place:context.place}),
     async api(path,body,method='POST'){
       if(path==='/api/config'){
         const response=await fetcher('/api/access',{cache:'no-store'});

@@ -64,7 +64,7 @@ export const searchFollowup=text=>{
     ||/^(?:我)?(?:已经)?把(?:摄像头|镜头)对准(?:它|他|她|这个|那个)?(?:了)?$/.test(value);
 };
 const selection=text=>/^(?:是|要|记住)?(?:左边|右边|中间|最左边|最右边|前面|后面|靠近.{1,12}|旁边|蓝色|红色|绿色|透明)(?:的)?(?:那个|那只|那一个|杯子)?$/.test(clean(text));
-const cancelled=text=>/^(?:不用找了|别找了|停止找物|取消|不用记了|不要记了|停止观察|关闭摄像头)$/.test(clean(text));
+const cancelled=text=>/^(?:我找到了|找到了|不用找了|别找了|停止找物|取消|不用记了|不要记了|停止观察|关闭摄像头)$/.test(clean(text));
 
 // Only an explicit user request opens a short-lived write authorization.
 // Every observation carries that authorization's token; stale responses cannot save.

@@ -19,7 +19,7 @@ for(const name of ['retro-pixel-ui.svg','retro-pixel-home.svg','retro-pixel-reco
 await fs.copyFile(path.join(root,'web/memory.mjs'),path.join(dist,'static/memory.mjs'));
 await fs.copyFile(path.join(root,'web/find-dialogue.mjs'),path.join(dist,'static/find-dialogue.mjs'));
 await fs.copyFile(path.join(root,'web/runtime.mjs'),path.join(dist,'static/runtime.mjs'));
-for(const name of ['realtime-observation','interaction','wake','context','stream','scene-speech','person-context','conversation','unified-home','interface-commands'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
+for(const name of ['continuous-search','realtime-observation','interaction','wake','context','stream','scene-speech','person-context','conversation','unified-home','interface-commands'])await fs.copyFile(path.join(root,`web/${name}.mjs`),path.join(dist,`static/${name}.mjs`));
 let js=await fs.readFile(path.join(root,'src/static/app.js'),'utf8');
 js=js.replace("const PAGE=document.body.dataset.page;","import {runtime} from './runtime.mjs';\nlet PAGE=document.body.dataset.page;\nawait runtime.loaded;");
 js=js.replace("const res=await fetch(path,", "if(window.spatialRuntime)return window.spatialRuntime.api(path,body,method);\n const res=await fetch(path,");
@@ -91,6 +91,7 @@ function finishVoice`);
 js=js.replace('cameraStream=stream;$(\'preview\').srcObject=stream;$(\'preview\').style.display=\'block\';$(\'camera-empty\').hidden=true;',`cameraStream=stream;$('preview').muted=true;$('preview').playsInline=true;$('preview').srcObject=stream;$('preview').style.display='block';$('camera-empty').hidden=true;cameraUI();await $('preview').play();if(generation!==cameraGeneration)return false;`);
 js=js.replace("stateUI('对话已结束，麦克风已关闭。');}","stateUI('对话已结束，麦克风已关闭。');if(wake.enabled&&!document.hidden)setTimeout(()=>{if(!sessionActive()&&!document.hidden)wake.resume();},600);}");
 js=js.replace("case 'app.memory':",`case 'app.observe':if(!paused&&!videoId&&!videoOpening)await startVideo(event.goal,true);break;
+ case 'app.search_state':unifiedHome.syncState();break;
  case 'app.scene_begin':sceneText='';$('replay').disabled=true;sceneSpeech?.begin(event.token);break;
  case 'app.scene_delta':sceneText+=event.text;$('latest-answer').textContent=sceneText;sceneSpeech?.append(event.text);break;
  case 'app.scene_cancel':sceneSpeech?.cancel();break;

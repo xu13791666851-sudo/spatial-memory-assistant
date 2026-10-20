@@ -838,7 +838,7 @@ test('saved paper cup is recalled from natural typed and spoken questions withou
   const speak=text=>input==='spoken'?say(bridge,text):bridge.send(JSON.stringify({type:'text',text}));
   speak('请帮我记住纸杯的位置');await finishPicture(bridge);assert.equal(runtime.memory.get('纸杯').location,candidate.location);
   bridge.endVideo('摄像头关闭');const saved=data.getItem('spatial-memory.records.v1');
-  for(const phrase of ['我不记得放哪里了，你帮我看看之前我放在哪里了','你帮我看看之前我把纸杯放在哪里了','白色纸杯上次放在哪里','我想知道纸杯的位置','帮我找纸杯','它在哪里','我忘了把纸杯放哪了']){
+  for(const phrase of ['我不记得放哪里了，你帮我看看之前我放在哪里了','你帮我看看之前我把纸杯放在哪里了','白色纸杯上次放在哪里','我想知道纸杯的位置','它在哪里','我忘了把纸杯放哪了']){
    speak(phrase);assert.match(lastAnswer(events),/纸杯在木桌上，纸巾盒旁边/,phrase);
    assert.match(lastAnswer(events),/还没有确认现在的位置/);assert.equal(events.at(-1).source,'history');
   }
@@ -936,4 +936,67 @@ test('a newly named manual record does not inherit a loosely matched objects app
  const m=new Memory(storage());m.saveVisual('绿色水杯',{...candidate,appearance:'浅绿色杯身，有把手'});
  m.prepare({action:'record',name:'水杯',location:'厨房桌上'});m.confirm(m.pending.token);
  const created=m.all().find(r=>r.name==='水杯');assert.equal(created.appearance,'');assert.equal(created.object_id,undefined);
+});
+
+// Deterministic clock advances the scheduler, while the normal frame gate and
+// request/result validation still run through the production Bridge.
+function searchClock(){
+ let now=0,serial=0;const timers=new Map();
+ return {clock:()=>now,setTimer:(fn,ms)=>{const id=++serial;timers.set(id,{at:now+ms,fn});return id;},clearTimer:id=>timers.delete(id),
+  advance:async ms=>{const end=now+ms;for(;;){const next=[...timers].filter(([,v])=>v.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;now=next[1].at;timers.delete(next[0]);next[1].fn();await settle();}now=end;await settle();}};
+}
+test('continuous search takes fresh frames without repeated commands, confirms twice and leaves history unchanged',async t=>{
+ const clock=searchClock(),requests=[];let result=missingCup,frame=0;
+ const f=visualFixture({searchClock:clock,captureFrame:()=>'/9j/frame-'+(++frame),fetch:async(url,opts)=>{if(url==='/api/vision'){requests.push(JSON.parse(opts.body));return Response.json(result);}return Response.json({configured:true,authenticated:true});}});
+ const {runtime,bridge,events,data}=f;t.after(()=>bridge.close());runtime.setPlace('home');
+ runtime.memory.saveVisual('蓝色杯子',{...candidate,appearance:'蓝色圆柱杯身，有白色把手'},new Date().toISOString());
+ const before=data.getItem('spatial-memory.records.v1');say(bridge,'帮我找蓝色杯子');assert.match(lastAnswer(events),/上次记录在/);assert.equal(bridge.search.state,'searching');
+ await clock.advance(1000);await finishPicture(bridge);assert.equal(requests.length,1);assert.equal(events.filter(e=>e.type==='app.scene_fallback').length,0);
+ result={...seenCup,appearance_match:{status:'match',unique:true,reason:'蓝色杯身、白色把手一致'}};
+ await clock.advance(7999);assert.equal(requests.length,1);await clock.advance(1);await finishPicture(bridge);assert.equal(bridge.search.state,'confirming');assert.equal(requests.length,2);
+ await clock.advance(8000);await finishPicture(bridge);assert.equal(bridge.search.state,'found');assert.match(lastAnswer(events),/找到了蓝色杯子/);
+ await clock.advance(60000);assert.equal(requests.length,3);assert.equal(new Set(requests.map(r=>r.image)).size,3);assert.ok(requests.every(r=>r.task.remember===false&&r.task.reference_appearance==='蓝色圆柱杯身，有白色把手'));
+ assert.equal(data.getItem('spatial-memory.records.v1'),before);assert.equal(events.filter(e=>e.type==='app.scene_fallback').length,1);
+});
+test('slow continuous observations never overlap or queue old frames',async t=>{
+ const clock=searchClock();let finish,calls=0;const {bridge}=visualFixture({searchClock:clock,fetch:async url=>url==='/api/vision'?(calls++,await new Promise(resolve=>finish=resolve)):Response.json({configured:true,authenticated:true})});t.after(()=>bridge.close());
+ say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);await clock.advance(20000);assert.equal(calls,1);
+ finish(Response.json(missingCup));await settle();await clock.advance(0);await finishPicture(bridge);assert.equal(calls,2);
+ bridge.send(JSON.stringify({type:'text',text:'取消'}));finish(Response.json(seenCup));await settle();assert.equal(bridge.search.state,'idle');assert.equal(bridge.lastObservedAt,null);
+});
+test('speech, pause, camera stop, scene switch, close and replacement discard a pending search result',async t=>{
+ for(const action of [b=>b.event({type:'input_audio_buffer.speech_started'}),b=>b.send(JSON.stringify({type:'pause'})),b=>b.endVideo('关闭'),(b,r)=>r.setPlace('home'),b=>b.close(),b=>say(b,'找钥匙')]){
+  const clock=searchClock();let finish;
+  const {bridge,runtime,events}=visualFixture({searchClock:clock,fetch:async url=>url==='/api/vision'?await new Promise(resolve=>finish=resolve):Response.json({configured:true,authenticated:true})});t.after(()=>bridge.close());
+  say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);action(bridge,runtime);finish(Response.json(seenCup));await settle();
+  assert.ok(!events.some(e=>e.type==='app.scene_fallback'||e.type==='app.scene_answer'));assert.equal(bridge.lastObservedAt,null);
+ }
+});
+test('pause and resume preserve the target but reset confirmation; timeout aborts the current observation',async t=>{
+ const clock=searchClock();let finish;
+ const {bridge,events}=visualFixture({searchClock:clock,fetch:async url=>url==='/api/vision'?await new Promise(resolve=>finish=resolve):Response.json({configured:true,authenticated:true})});t.after(()=>bridge.close());
+ say(bridge,'找水杯');say(bridge,'暂停寻找');await clock.advance(20000);assert.equal(bridge.scene.config,null);assert.equal(bridge.search.state,'paused');
+ say(bridge,'继续找');assert.equal(bridge.search.task.target,'水杯');await clock.advance(1000);await finishPicture(bridge);
+ await clock.advance(119000);assert.equal(bridge.search.state,'paused');assert.match(lastAnswer(events),/这轮寻找已暂停/);
+ finish(Response.json(seenCup));await settle();assert.ok(!events.some(e=>e.type==='app.scene_fallback'));say(bridge,'取消');assert.equal(bridge.search.task,null);
+});
+test('saved appearance conflicts, uncertain or multiple matches reset consecutive search confirmation',async t=>{
+ const clock=searchClock();let result={...seenCup,appearance_match:{status:'match',unique:true,reason:'颜色形状把手一致'}};
+ const {runtime,bridge,events}=visualFixture({searchClock:clock,fetch:async url=>Response.json(url==='/api/vision'?result:{configured:true,authenticated:true})});t.after(()=>bridge.close());runtime.setPlace('home');runtime.memory.saveVisual('水杯',{...candidate,appearance:'蓝色带白色把手'},new Date().toISOString());
+ say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);assert.equal(bridge.search.state,'confirming');
+ for(const status of ['different','uncertain','multiple']){result={...seenCup,appearance_match:{status,unique:false,reason:'不能匹配'}};await clock.advance(8000);await finishPicture(bridge);assert.equal(bridge.search.state,'searching');}
+ assert.ok(!events.some(e=>e.type==='app.scene_fallback'));assert.equal(bridge.search.hits,0);
+});
+test('history-only questions and ambiguous saved names never start continuous observation',async t=>{
+ const clock=searchClock();const {bridge,runtime,events}=visualFixture({searchClock:clock});t.after(()=>bridge.close());runtime.setPlace('home');runtime.memory.remember('记住，蓝色杯子放在桌上');runtime.memory.remember('记住，红色杯子放在柜子上');
+ say(bridge,'之前蓝色杯子放在哪里');assert.equal(bridge.search.state,'idle');say(bridge,'帮我找杯子');assert.match(lastAnswer(events),/具体物品/);await clock.advance(20000);assert.equal(bridge.scene.config,null);
+});
+
+test('a search rate limit pauses without repeated retries or overwriting memory',async t=>{
+ const clock=searchClock();let calls=0;const {bridge,events}=visualFixture({searchClock:clock,fetch:async url=>url==='/api/vision'?(calls++,new Response('Rate limited',{status:429})):Response.json({configured:true,authenticated:true})});t.after(()=>bridge.close());
+ say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);assert.equal(bridge.search.state,'paused');assert.match(events.findLast(e=>e.type==='app.video_error').message,/稍等片刻/);await clock.advance(60000);assert.equal(calls,1);
+});
+test('manual replay pauses an in-flight search and cannot strand its scheduler in searching state',async t=>{
+ const clock=searchClock();let finish;const {bridge,events}=visualFixture({searchClock:clock,fetch:async url=>url==='/api/vision'?await new Promise(resolve=>finish=resolve):Response.json({configured:true,authenticated:true})});t.after(()=>bridge.close());
+ say(bridge,'找水杯');await clock.advance(1000);await finishPicture(bridge);bridge.replayAnswer('上次记录的位置');assert.equal(bridge.search.state,'paused');finish(Response.json(seenCup));await settle();assert.ok(!events.some(e=>e.type==='app.scene_fallback'));
 });
