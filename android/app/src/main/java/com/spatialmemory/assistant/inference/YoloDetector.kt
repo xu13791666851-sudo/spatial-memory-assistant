@@ -28,7 +28,8 @@ class YoloDetector(private val context: Context) : Closeable {
             descriptor.declaredLength,
         )
     }
-    private val interpreter = Interpreter(modelBuffer, Interpreter.Options().apply { setNumThreads(4); setUseXNNPACK(true) })
+    // Leave CPU time for microphone, playback and camera processing during inference.
+    private val interpreter = Interpreter(modelBuffer, Interpreter.Options().apply { setNumThreads(2); setUseXNNPACK(true) })
     val info = ModelInfo(
         interpreter.getInputTensor(0).shape(),
         interpreter.getOutputTensor(0).shape(),

@@ -13,8 +13,8 @@ android {
         applicationId = "com.spatialmemory.assistant.iseeyou.native"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.5.0-native-preview"
+        versionCode = 4
+        versionName = "0.5.1-native-preview"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
         buildConfigField("String", "QWEN_API_KEY", "\"\"")

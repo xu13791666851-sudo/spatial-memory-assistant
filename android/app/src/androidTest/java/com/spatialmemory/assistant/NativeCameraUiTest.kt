@@ -4,6 +4,8 @@ import android.Manifest
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import java.io.File
+import com.alibaba.aoq.clientsdk.AoqClientEngine
 import android.widget.Button
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -20,6 +22,9 @@ import com.spatialmemory.assistant.camera.FramePacket
 import com.spatialmemory.assistant.realtime.CandidateVerificationRequest
 import com.spatialmemory.assistant.realtime.QwenImageVerifier
 import com.spatialmemory.assistant.realtime.parseDirectCredential
+import com.spatialmemory.assistant.realtime.toConnectConfig
+import com.spatialmemory.assistant.realtime.AoqQwenRealtimeClient
+import com.spatialmemory.assistant.realtime.RealtimeState
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
@@ -29,6 +34,8 @@ class NativeCameraUiTest {
         val credential = parseDirectCredential("""{"aoqTokenForClient":"test","sid":"test","clientRelayCertFingerprint":"test","clientRelayEndpoints":[{"endpoint":"127.0.0.1","port":8443,"tcpPort":443,"route_index":1}]}""")
         assertEquals(443, credential.relayEndpoints.single().tcpPort)
         assertEquals(1, credential.relayEndpoints.single().routeIndex)
+        assertEquals(com.alibaba.aoq.clientsdk.AoqClientEngine.AoqTrackMode.AoqTrackModeSegment,
+            credential.toConnectConfig().subscribeTracks.first().trackMode)
     }
     @Test fun actualAndroidHttpClientCanGetImageConfirmation() = runBlocking {
         val jpeg = InstrumentationRegistry.getInstrumentation().context.assets.open("bus.jpg").use { it.readBytes() }
@@ -84,10 +91,12 @@ class NativeCameraUiTest {
         }
         ActivityScenario.launch(PixelHomeActivity::class.java).use { scenario ->
             var controller: AssistantController? = null
+            var realtime: AoqQwenRealtimeClient? = null
             scenario.onActivity { activity ->
                 assertNotNull(activity.findViewById<YoloPreviewView>(R.id.native_yolo_overlay))
                 val field = PixelHomeActivity::class.java.getDeclaredField("controller").apply { isAccessible = true }
                 controller = field.get(activity) as AssistantController
+                realtime = PixelHomeActivity::class.java.getDeclaredField("qwen").apply { isAccessible = true }.get(activity) as AoqQwenRealtimeClient
                 activity.findViewById<Button>(R.id.native_voice).performClick()
             }
             // ARM-only vendor libraries run under translation on the x86 test emulator.
@@ -95,6 +104,25 @@ class NativeCameraUiTest {
             while (controller!!.state.value.yoloLatencyMs == null && System.currentTimeMillis() < deadline) Thread.sleep(200)
             assertTrue("CameraX must be running", controller!!.state.value.running)
             assertNotNull("Actual camera frames must reach YOLO: ${controller!!.state.value}", controller!!.state.value.yoloLatencyMs)
+            assertEquals("Voice and YOLO must work in the same home session", RealtimeState.CONNECTED, realtime!!.state.value)
+            // A fixed WAV goes through the real native audio encoder and cloud ASR;
+            // do not substitute sendText or a fake transcript for the voice command.
+            val sample = File(context.cacheDir, "voice-acceptance.wav")
+            sample.writeBytes(instrument.context.assets.open("find-cup.wav").use { it.readBytes() })
+            val engine = AoqQwenRealtimeClient::class.java.getDeclaredField("engine").apply { isAccessible = true }.get(realtime) as AoqClientEngine
+            try {
+                assertEquals(0, engine.startAudioFile("acceptance", AoqClientEngine.AoqAudioFileMixConfig().apply {
+                    fileName = sample.absolutePath; cycles = 1; publishVolume = 100; playoutVolume = 0
+                }))
+                val spokenDeadline = System.currentTimeMillis() + 45_000
+                while (controller!!.state.value.target != "水杯" && System.currentTimeMillis() < spokenDeadline) Thread.sleep(200)
+                assertEquals("Cloud speech transcription must start the real search", "水杯", controller!!.state.value.target)
+                File(context.filesDir, "voice-command-acceptance.json").writeText("""{"cloud_speech_command_started_search":true,"target":"水杯","input_method":"fixed WAV published through native SDK and real cloud ASR","physical_microphone_tested":false}""")
+                instrument.uiAutomation.takeScreenshot()?.let { image ->
+                    File(context.filesDir, "voice-command-acceptance.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                    image.recycle()
+                }
+            } finally { engine.stopAudioFile("acceptance"); sample.delete() }
             scenario.onActivity { it.findViewById<Button>(R.id.native_voice).performClick() }
             val end = System.currentTimeMillis() + 10_000
             while (controller!!.state.value.running && System.currentTimeMillis() < end) Thread.sleep(100)

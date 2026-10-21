@@ -210,6 +210,7 @@ class PixelHomeActivity : ComponentActivity() {
         sourceLabel.text = if (state.source == CameraSource.ESP32 || sourceKind == "esp32") "● 外接摄像头" else "● 手机摄像头"
         headline.text = when {
             !state.running -> if (state.error != null) "启动没有完成" else "点击语音找物开始"
+            qwen.state.value == RealtimeState.CONNECTING && state.target.isNullOrBlank() -> "正在连接语音，请稍候"
             state.target.isNullOrBlank() -> "说出你想找或记住的物品"
             state.searchState == SearchState.LEARNING -> "正在记住：${state.target}"
             state.searchState == SearchState.VERIFYING -> "发现疑似物品，正在确认"
@@ -222,7 +223,7 @@ class PixelHomeActivity : ComponentActivity() {
             state.error != null -> state.error
             state.searchState == SearchState.LEARNING -> "外观样本 ${state.learningSamples}/3 · 请按语音提示调整角度"
             qwen.state.value == RealtimeState.FAILED || qwen.state.value == RealtimeState.DISCONNECTED -> "本地识别运行中 · 语音未连接，请结束后重试"
-            qwen.state.value != RealtimeState.CONNECTED -> "本地识别运行中 · 语音正在连接"
+            qwen.state.value != RealtimeState.CONNECTED -> "画面已开启 · 语音正在连接"
             else -> "语音已就绪 · 识别框显示当前检测结果"
         }
         if (!state.running) yoloPreview.clearFrame()

@@ -126,6 +126,10 @@ class AssistantOrchestrator(
 
     private suspend fun processFrames(generation: Long) {
         try {
+            // Keep the preview live, but let the first voice handshake finish before
+            // spending CPU on inference. Local detection still starts if voice fails.
+            qwenConnectJob?.join()
+            if (!guard.valid(generation)) return
             router.frame.collect { frame ->
                 if (frame == null || !guard.valid(generation)) return@collect
                 mutableState.value = mutableState.value.copy(frameId = frame.id, frameAgeMs = System.currentTimeMillis() - frame.capturedAtMs, message = mutableState.value.messageWhileProcessing(frame.id))
