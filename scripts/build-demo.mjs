@@ -12,6 +12,7 @@ let adapter=await fs.readFile('web/android-home.mjs','utf8');
 adapter=adapter.replaceAll('本机 YOLO','YOLO 后台').replaceAll('安卓本机','网页后台').replaceAll('本机外观','外观').replaceAll('安卓核心','网页演示').replace("photo.hidden=false;$('camera-empty').hidden=true;","photo.hidden=!!window.WebDemoBridge;$('camera-empty').hidden=true;");
 adapter=adapter.replace("if(data.role==='user'){conversation.add(data.text,true);", "if(data.role==='user'&&window.WebDemoBridge){void send(data.text).catch(e=>notice(e.message));return;}if(data.role==='user'){conversation.add(data.text,true);");
 adapter=adapter.replace("await call('text',{text});conversation.add(text,true);", "conversation.add(text,true);await call('text',{text});");
+adapter=adapter.replace("const action=interfaceCommand(text);if(action){", "if(/^(关闭摄像头|停止观察|停止视频)[。！？!?]*$/.test(text)){conversation.add(text,true);return perform('stop');}const action=interfaceCommand(text);if(action?.type==='cancel-confirmation'){conversation.add(text,true);await call('cancel');return true;}if(action){");
 await fs.writeFile(target+'/static/android-home.mjs',adapter);
 await fs.writeFile(target+'/static/demo.css',`#preview{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}#native-preview{display:none!important}.demo-standalone{padding:12px;margin:0;font-size:16px}.demo-standalone a{color:#17448c}`);
 console.log('Web demonstration built: original pixel UI with actual browser media and server core.');

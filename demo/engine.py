@@ -67,6 +67,7 @@ class Session:
         self.frame_busy = False
         self.seen = time.monotonic()
         self.pending_choices = []
+        self.offer_history = False
         self.reset_state()
 
     def reset_state(self):
@@ -95,6 +96,7 @@ class Session:
         self.previous = None
         self.hits = 0
         self.last_check = 0
+        self.offer_history = False
         self.change(verifiedBox=None, verifiedAt=0, error=None)
 
     def matches(self, name):
@@ -150,6 +152,15 @@ class Session:
         text = str(params.get('text', '')).strip()
         if not 0 < len(text) <= 400:
             raise ValueError('请输入不超过400字的内容。')
+        if self.offer_history and text.strip('。！？!? ') in ['需要','要','好','好的','是','听一下','上次的位置']:
+            self.offer_history=False
+            record=next((r for r in self.store.all(self.owner) if self.memory and r['id']==self.memory['id']),None)
+            self.say(record['name']+'上次记录：'+record['location']+'。这是历史位置，尚未由当前画面确认。' if record else '这条历史记忆已经变化，请重新打开记录查看。')
+            return True
+        if self.offer_history and text.strip('。！？!? ') in ['不需要','不要','不用了']:
+            self.offer_history=False
+            self.say('好，继续看当前画面。')
+            return True
         if self.pending_choices:
             choices = [r for r in self.pending_choices if text in r['name'] or r['name'] in text]
             if len(choices)==1:
@@ -305,6 +316,7 @@ class Session:
                 self.say('看到了'+self.focus+('，'+detail if detail else '')+'。左右以镜头画面为准。')
             else:
                 self.change(searchState='SEARCHING', verifiedBox=None, verifiedAt=0, message='当前画面还没有确认是记住的物品，继续寻找。')
+                self.offer_history=bool(self.memory)
                 self.say('还没有确认是你要找的'+self.focus+'。可以换一个角度，把物品和周围的桌面一起拍进来。'+('需要听听上次记住的位置吗？' if self.memory else ''))
         except asyncio.CancelledError:
             raise
