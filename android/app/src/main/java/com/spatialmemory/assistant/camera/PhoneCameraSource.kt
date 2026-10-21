@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
 import android.util.Size
+import android.os.SystemClock
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -37,6 +38,7 @@ class PhoneCameraSource(
     private var provider: ProcessCameraProvider? = null
     private var analyzerExecutor: ExecutorService? = null
     private var nextId = 0L
+    private val pacer = FramePacer()
 
     override val state = mutableState.asStateFlow()
     override val frames: Flow<FramePacket> = mutableFrames.asSharedFlow()
@@ -44,6 +46,7 @@ class PhoneCameraSource(
     override suspend fun start() {
         if (mutableState.value == FrameSourceState.RUNNING) return
         mutableState.value = FrameSourceState.STARTING
+        pacer.reset()
         try {
             val cameraProvider = awaitProvider()
             val preview = Preview.Builder().build().also { previewView?.surfaceProvider?.let(it::setSurfaceProvider) }
@@ -78,6 +81,7 @@ class PhoneCameraSource(
 
     private fun onImage(image: ImageProxy) {
         try {
+            if (!pacer.offer(SystemClock.elapsedRealtime())) return
             val jpeg = image.toJpeg()
             mutableFrames.tryEmit(
                 FramePacket(++nextId, source, System.currentTimeMillis(), jpeg, image.imageInfo.rotationDegrees),

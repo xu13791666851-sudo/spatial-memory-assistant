@@ -149,6 +149,7 @@ class PixelHomeActivity : ComponentActivity() {
         }
         root.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(14); bottomMargin = dp(14) })
         cameraPreview = PreviewView(this).apply {
+            visibility = View.INVISIBLE
             scaleType = PreviewView.ScaleType.FIT_CENTER
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
         }
@@ -204,6 +205,7 @@ class PixelHomeActivity : ComponentActivity() {
     private suspend fun stopSession() { sessionSerial++; controller.stop(); yoloPreview.clearFrame() }
 
     private fun renderState(state: AssistantState) {
+        cameraPreview.visibility = if (state.running && sourceKind == "phone") View.VISIBLE else View.INVISIBLE
         voiceButton.text = if (state.running) "结束" else "语音找物"
         sourceLabel.text = if (state.source == CameraSource.ESP32 || sourceKind == "esp32") "● 外接摄像头" else "● 手机摄像头"
         headline.text = when {

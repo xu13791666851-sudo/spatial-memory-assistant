@@ -61,6 +61,7 @@ class AoqQwenRealtimeClient(
         mediaOrderGate.reset()
         synchronized(handledToolCalls) { handledToolCalls.clear() }
         mutableState.value = RealtimeState.CONNECTING
+        try {
         val credential = credentialProvider()
         val create = AoqClientEngine.AoqCreateConfig().apply {
             workDir = context.cacheDir.absolutePath
@@ -80,11 +81,17 @@ class AoqQwenRealtimeClient(
         created.enableSendMediaStream(AoqClientEngine.AoqTrackType.AoqTrackTypeAudio, false)
         created.enableSendMediaStream(AoqClientEngine.AoqTrackType.AoqTrackTypeVideo, false)
         created.connect(credential.toConnectConfig()).requireOk("连接千问")
-        withTimeout(10_000) {
+        withTimeout(20_000) {
             mutableState.first { it == RealtimeState.CONNECTED || it == RealtimeState.FAILED }
         }
         check(mutableState.value == RealtimeState.CONNECTED) { "千问实时连接失败" }
         delay(1_000)
+        } catch (error: Throwable) {
+            // A timed-out connection must not keep recording and consuming CPU indefinitely.
+            withContext(kotlinx.coroutines.NonCancellable) { disconnect() }
+            if (error !is kotlinx.coroutines.CancellationException) mutableState.value = RealtimeState.FAILED
+            throw error
+        }
     }
 
     override suspend fun sendFrame(frame: FramePacket, prompt: String) {
@@ -264,7 +271,7 @@ private fun AoqCredential.toConnectConfig() = AoqClientEngine.AoqConnectConfig()
     config.certFingerprint = certFingerprint
     config.workspaceIdHash = workspaceIdHash
     config.relayEndpoints = relayEndpoints.map { relay -> AoqClientEngine.AoqRelayEndpoint().also {
-        it.endpoint = relay.endpoint; it.port = relay.port; it.routeIndex = relay.routeIndex
+        it.endpoint = relay.endpoint; it.port = relay.port; it.routeIndex = relay.routeIndex; it.tcpPort = relay.tcpPort
     } }
     fun track(type: AoqClientEngine.AoqTrackType) = AoqClientEngine.AoqTrackParam().also {
         it.trackType = type; it.trackMode = AoqClientEngine.AoqTrackMode.AoqTrackModeStream

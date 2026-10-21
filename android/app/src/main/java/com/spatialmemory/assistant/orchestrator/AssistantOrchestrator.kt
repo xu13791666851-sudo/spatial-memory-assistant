@@ -152,6 +152,7 @@ class AssistantOrchestrator(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
+            android.util.Log.e("AssistantOrchestrator", "Local frame processing failed", error)
             mutableState.value = mutableState.value.copy(error = error.message ?: error.javaClass.simpleName, message = "识别已停止")
         }
     }

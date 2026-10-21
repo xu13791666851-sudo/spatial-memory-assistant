@@ -19,11 +19,17 @@ import com.spatialmemory.assistant.camera.CameraSource
 import com.spatialmemory.assistant.camera.FramePacket
 import com.spatialmemory.assistant.realtime.CandidateVerificationRequest
 import com.spatialmemory.assistant.realtime.QwenImageVerifier
+import com.spatialmemory.assistant.realtime.parseDirectCredential
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 
 class NativeCameraUiTest {
+    @Test fun keepsTheProvidersTcpFallbackPort() {
+        val credential = parseDirectCredential("""{"aoqTokenForClient":"test","sid":"test","clientRelayCertFingerprint":"test","clientRelayEndpoints":[{"endpoint":"127.0.0.1","port":8443,"tcpPort":443,"route_index":1}]}""")
+        assertEquals(443, credential.relayEndpoints.single().tcpPort)
+        assertEquals(1, credential.relayEndpoints.single().routeIndex)
+    }
     @Test fun actualAndroidHttpClientCanGetImageConfirmation() = runBlocking {
         val jpeg = InstrumentationRegistry.getInstrumentation().context.assets.open("bus.jpg").use { it.readBytes() }
         val frame = FramePacket(1L, CameraSource.PHONE, System.currentTimeMillis(), jpeg)
