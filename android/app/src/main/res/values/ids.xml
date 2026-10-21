@@ -1,0 +1,9 @@
+<resources>
+    <item name="native_voice" type="id" />
+    <item name="native_settings" type="id" />
+    <item name="native_records" type="id" />
+    <item name="native_yolo_overlay" type="id" />
+    <item name="native_headline" type="id" />
+    <item name="native_pair" type="id" />
+    <item name="native_source" type="id" />
+</resources>

@@ -16,7 +16,7 @@ class YoloPreviewView(context: Context) : View(context) {
     private val boxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0, 230, 118); style = Paint.Style.STROKE; strokeWidth = 5f }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 36f }
     private val labelPaint = Paint().apply { color = Color.argb(210, 0, 0, 0); style = Paint.Style.FILL }
-    private val waitingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.LTGRAY; textSize = 38f; textAlign = Paint.Align.CENTER }
+    private val waitingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(98, 114, 142); textSize = 16 * resources.displayMetrics.scaledDensity; textAlign = Paint.Align.CENTER }
 
     init {
         setBackgroundColor(Color.TRANSPARENT)

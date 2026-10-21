@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Original engineering controls remain internal; never exposed in the two-entry user menu. -->
+    <application>
+        <activity android:name=".debug.HardwareDebugActivity" android:exported="false" />
+    </application>
+</manifest>

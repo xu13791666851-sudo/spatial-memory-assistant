@@ -47,6 +47,7 @@ import com.spatialmemory.assistant.realtime.AoqQwenRealtimeClient
 import com.spatialmemory.assistant.realtime.DirectAoqCredentialClient
 import com.spatialmemory.assistant.realtime.QwenImageVerifier
 import com.spatialmemory.assistant.speech.SpeechCoordinator
+import com.spatialmemory.assistant.ui.NativeGatewayCredentialClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -193,8 +194,8 @@ class HardwareDebugActivity : ComponentActivity() {
         detector = YoloDetector(this)
         provisioner = Esp32Provisioner(this)
         phoneSource = PhoneCameraSource(this, this, cameraPreview)
-        val credentialClient = DirectAoqCredentialClient(BuildConfig.QWEN_API_KEY)
-        val qwenClient = AoqQwenRealtimeClient(this, credentialClient::getAoqCredential, QwenImageVerifier(BuildConfig.QWEN_API_KEY))
+        val credentialClient = NativeGatewayCredentialClient(BuildConfig.GATEWAY_URL)
+        val qwenClient = AoqQwenRealtimeClient(this, credentialClient::get, QwenImageVerifier("", gateway = BuildConfig.GATEWAY_URL))
         speechCoordinator = SpeechCoordinator(this, qwenClient::setMicrophoneEnabled)
         val database = AppDatabase.get(this)
         val embedder = HistogramObjectEmbedder()

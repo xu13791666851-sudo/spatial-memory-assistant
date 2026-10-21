@@ -21,7 +21,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="I SEE YOU 测试版"
+        android:label="I SEE YOU 原生测试"
         android:usesCleartextTraffic="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.SpatialMemory">

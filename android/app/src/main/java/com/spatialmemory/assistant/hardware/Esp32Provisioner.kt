@@ -24,6 +24,7 @@ import java.nio.ByteOrder
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,8 +53,7 @@ class Esp32Provisioner(private val context: Context) : DeviceProvisioner {
             ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(),
             callback,
         )
-        delay(5_000)
-        scanner.stopScan(callback)
+        try { delay(5_000) } finally { scanner.stopScan(callback) }
         mutableState.value = ProvisionState.IDLE
         return devices.values.sortedByDescending { it.rssi }.map {
             DeviceCandidate(it.device.address, it.scanRecord?.deviceName ?: "视障相机", it.rssi)
@@ -86,6 +86,8 @@ class Esp32Provisioner(private val context: Context) : DeviceProvisioner {
             }
             mutableState.value = ProvisionState.CONNECTED
             ProvisionResult.Success(network.optString("deviceId", deviceId), "http://${network.getString("ip")}", network.optString("token"))
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Throwable) {
             mutableState.value = ProvisionState.FAILED
             ProvisionResult.Failure(error.message ?: "BLE 配网失败")
