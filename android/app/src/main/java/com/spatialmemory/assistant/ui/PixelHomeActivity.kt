@@ -210,6 +210,7 @@ class PixelHomeActivity : ComponentActivity() {
         sourceLabel.text = if (state.source == CameraSource.ESP32 || sourceKind == "esp32") "● 外接摄像头" else "● 手机摄像头"
         headline.text = when {
             !state.running -> if (state.error != null) "启动没有完成" else "点击语音找物开始"
+            state.target.isNullOrBlank() -> "说出你想找或记住的物品"
             state.searchState == SearchState.LEARNING -> "正在记住：${state.target}"
             state.searchState == SearchState.VERIFYING -> "发现疑似物品，正在确认"
             state.searchState == SearchState.SEARCHING -> "正在寻找：${state.target}"
@@ -217,6 +218,7 @@ class PixelHomeActivity : ComponentActivity() {
         }
         detail.text = when {
             !state.running -> state.error ?: "准备好后说：帮我找水杯，或记住水杯"
+            state.error?.startsWith("千问") == true -> "语音暂时未连接，可以结束后重试"
             state.error != null -> state.error
             state.searchState == SearchState.LEARNING -> "外观样本 ${state.learningSamples}/3 · 请按语音提示调整角度"
             qwen.state.value == RealtimeState.FAILED || qwen.state.value == RealtimeState.DISCONNECTED -> "本地识别运行中 · 语音未连接，请结束后重试"

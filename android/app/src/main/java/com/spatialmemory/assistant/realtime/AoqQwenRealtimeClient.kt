@@ -67,6 +67,7 @@ class AoqQwenRealtimeClient(
             workDir = context.cacheDir.absolutePath
             maxEncodedVideoFrameBytes = 512 * 1024
             enableDropOversizedVideoFrame = true
+            extras = JSONObject().put("tcp_fallback_enabled", true).put("signal_tcp_fallback_enabled", true).toString()
         }
         val created = AoqClientEngine.createEngine(context.applicationContext, create, listener)
             ?: error("无法创建 AOQ 引擎")

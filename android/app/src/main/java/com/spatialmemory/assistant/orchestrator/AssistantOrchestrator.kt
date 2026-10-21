@@ -325,7 +325,8 @@ class AssistantOrchestrator(
                         taskEngine.task?.id?.let(taskEngine::verificationFailed)
                         gate.reset()
                     }
-                    mutableState.value = mutableState.value.copy(searchState = SearchState.SEARCHING, error = "${event.message}；本地识别继续", qwenVerifying = false)
+                    val state = mutableState.value
+                    mutableState.value = state.copy(searchState = state.searchStateAfterVoiceError(), error = "${event.message}；本地识别继续", qwenVerifying = false)
                 }
             }
         }
