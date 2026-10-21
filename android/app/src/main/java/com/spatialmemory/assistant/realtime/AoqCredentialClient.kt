@@ -9,7 +9,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
-data class AoqRelayEndpoint(val endpoint: String, val port: Int, val routeIndex: Int)
+data class AoqRelayEndpoint(val endpoint: String, val port: Int, val routeIndex: Int, val tcpPort: Int = 0)
 data class AoqCredential(
     val token: String,
     val sid: String,
@@ -42,7 +42,7 @@ class AoqCredentialClient(
                 sid = value.getString("sid"),
                 certFingerprint = value.getString("certFingerprint"),
                 relayEndpoints = List(relays.length()) { index -> relays.getJSONObject(index).let {
-                    AoqRelayEndpoint(it.getString("endpoint"), it.getInt("port"), it.getInt("routeIndex"))
+                    AoqRelayEndpoint(it.getString("endpoint"), it.getInt("port"), it.getInt("routeIndex"), it.optInt("tcpPort", 0))
                 } },
                 workspaceIdHash = value.optString("workspaceIdHash"),
                 expiresAtEpochSeconds = value.getLong("expiresAt"),
@@ -89,7 +89,7 @@ internal fun parseDirectCredential(json: String): AoqCredential = JSONObject(jso
         sid = value.getString("sid"),
         certFingerprint = value.getString("clientRelayCertFingerprint"),
         relayEndpoints = List(relays.length()) { index -> relays.getJSONObject(index).let {
-            AoqRelayEndpoint(it.getString("endpoint"), it.getInt("port"), it.optInt("route_index", index))
+            AoqRelayEndpoint(it.getString("endpoint"), it.getInt("port"), it.optInt("route_index", index), it.optInt("tcpPort", it.optInt("tcp_port", 0)))
         } },
         workspaceIdHash = value.optJSONObject("extraInfo")?.optString("workspaceIdHash").orEmpty(),
         expiresAtEpochSeconds = System.currentTimeMillis() / 1000 + value.optLong("sidExpiresInSecs", 7200),

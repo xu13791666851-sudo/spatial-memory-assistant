@@ -36,3 +36,9 @@ internal fun AssistantState.messageWhileProcessing(frameId: Long): String = when
     SearchState.LEARNING, SearchState.VERIFYING, SearchState.GUIDING, SearchState.COMPLETED, SearchState.CANCELLED -> message
     else -> "已收到第 $frameId 帧，YOLO 推理中…"
 }
+
+internal fun AssistantState.searchStateAfterVoiceError(): SearchState = when {
+    target.isNullOrBlank() -> SearchState.IDLE
+    searchState == SearchState.VERIFYING -> SearchState.SEARCHING
+    else -> searchState
+}

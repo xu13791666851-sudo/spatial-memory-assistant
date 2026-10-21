@@ -2,9 +2,9 @@
 <resources>
     <style name="Theme.SpatialMemory" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#145B4A</item>
-        <item name="android:navigationBarColor">#FFFFFF</item>
+        <item name="android:colorAccent">#1552E8</item>
+        <item name="android:navigationBarColor">#FFFBED</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#FFFFFF</item>
+        <item name="android:statusBarColor">#FFFBED</item>
     </style>
 </resources>

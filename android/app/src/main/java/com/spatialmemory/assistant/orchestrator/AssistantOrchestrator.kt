@@ -126,6 +126,10 @@ class AssistantOrchestrator(
 
     private suspend fun processFrames(generation: Long) {
         try {
+            // Keep the preview live, but let the first voice handshake finish before
+            // spending CPU on inference. Local detection still starts if voice fails.
+            qwenConnectJob?.join()
+            if (!guard.valid(generation)) return
             router.frame.collect { frame ->
                 if (frame == null || !guard.valid(generation)) return@collect
                 mutableState.value = mutableState.value.copy(frameId = frame.id, frameAgeMs = System.currentTimeMillis() - frame.capturedAtMs, message = mutableState.value.messageWhileProcessing(frame.id))
@@ -152,6 +156,7 @@ class AssistantOrchestrator(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
+            android.util.Log.e("AssistantOrchestrator", "Local frame processing failed", error)
             mutableState.value = mutableState.value.copy(error = error.message ?: error.javaClass.simpleName, message = "识别已停止")
         }
     }
@@ -324,7 +329,8 @@ class AssistantOrchestrator(
                         taskEngine.task?.id?.let(taskEngine::verificationFailed)
                         gate.reset()
                     }
-                    mutableState.value = mutableState.value.copy(searchState = SearchState.SEARCHING, error = "${event.message}；本地识别继续", qwenVerifying = false)
+                    val state = mutableState.value
+                    mutableState.value = state.copy(searchState = state.searchStateAfterVoiceError(), error = "${event.message}；本地识别继续", qwenVerifying = false)
                 }
             }
         }

@@ -9,11 +9,12 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.spatialmemory.assistant.iseeyou.test"
+        // Separate install preserves every existing test app and its private memories.
+        applicationId = "com.spatialmemory.assistant.iseeyou.native"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.4.1-iseeyou-test"
+        versionCode = 4
+        versionName = "0.5.1-native-preview"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
         buildConfigField("String", "QWEN_API_KEY", "\"\"")
@@ -33,15 +34,16 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    androidResources { noCompress += "tflite" }
+    androidResources { noCompress += "tflite"; ignoreAssetsPattern = "site" }
     buildFeatures { buildConfig = true }
-    sourceSets { getByName("main").jniLibs.srcDirs("libs") }
+    sourceSets {
+        getByName("main").jniLibs.srcDirs("libs")
+    }
     testOptions { unitTests.isIncludeAndroidResources = true }
 }
 
 dependencies {
     implementation(files("libs/AoqClientSdk-release.aar"))
-    implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.1")

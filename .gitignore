@@ -30,6 +30,7 @@
 
 # Android build output and private machine configuration
 /android/.gradle/
+/android/.kotlin/
 /android/**/build/
 /android/local.properties
 /android/app/src/main/assets/site/

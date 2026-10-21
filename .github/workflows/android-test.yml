@@ -1,7 +1,7 @@
 name: Android original UI test
 on:
   push:
-    branches: [codex/handoff-core-original-ui]
+    branches: [codex/handoff-core-original-ui, codex/android-native-ui]
   workflow_dispatch:
 concurrency:
   group: android-core-${{ github.ref }}
