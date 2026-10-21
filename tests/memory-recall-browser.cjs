@@ -9,14 +9,14 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
   const url=new URL(route.request().url());if(url.hostname!=='ui.test')return route.abort();
   if(url.pathname.startsWith('/api/')){apiRequests.push(url.pathname);assert.equal(url.pathname,'/api/access');return route.fulfill({json:{configured:false,authenticated:false}});}
   let body=await fs.readFile(path.join(process.cwd(),'dist',url.pathname==='/'?'index.html':url.pathname),'utf8');
-  if(url.pathname==='/static/app.js')body+='\nwindow.recallTest={runtime,speak:text=>{const b=new runtime.Bridge();b.mode="assistant";b.onmessage=e=>handleCloud(JSON.parse(e.data));b.event({type:"conversation.item.input_audio_transcription.completed",transcript:text});b.close();}};';
+  if(url.pathname==='/static/app.js')body+='\nwindow.recallTest={runtime,sendText,speak:text=>{const b=new runtime.Bridge();b.mode="assistant";b.onmessage=e=>handleCloud(JSON.parse(e.data));b.event({type:"conversation.item.input_audio_transcription.completed",transcript:text});b.close();}};';
   return route.fulfill({body,contentType:url.pathname.endsWith('.svg')?'image/svg+xml':url.pathname.endsWith('.css')?'text/css':/\.(mjs|js)$/.test(url.pathname)?'text/javascript':'text/html'});
  });
- await page.goto('https://ui.test/');await page.waitForFunction(()=>!!window.recallTest);await page.selectOption('#place-mode','home');
+ await page.goto('https://ui.test/');await page.waitForFunction(()=>!!window.recallTest);await page.evaluate(()=>window.recallTest.speak('我在家了'));
  await page.evaluate(()=>window.recallTest.runtime.memory.saveVisual('纸杯',{unique:true,location_supported:true,anchor:'电脑',location:'书桌上，电脑左侧',appearance:'白色杯身，上宽下窄，杯口有红色条纹'}));
- await page.getByRole('button',{name:'记录',exact:true}).click();await page.getByRole('tab',{name:'物品记忆',exact:true}).click();assert.match(await page.locator('.memory-appearance').innerText(),/外观：白色杯身，上宽下窄，杯口有红色条纹/);await page.getByRole('button',{name:'关闭',exact:true}).click();
+ await page.getByRole('button',{name:'对话记录',exact:true}).click();await page.getByRole('tab',{name:'物品记忆',exact:true}).click();assert.match(await page.locator('.memory-appearance').innerText(),/外观：白色杯身，上宽下窄，杯口有红色条纹/);await page.getByRole('button',{name:'关闭',exact:true}).click();
  const stored=await page.evaluate(()=>localStorage.getItem('spatial-memory.records.v1'));
- const send=async text=>{await page.locator('#text-tools summary').click();await page.fill('#message',text);await page.click('#text-send');await page.locator('#text-composer').waitFor({state:'hidden'});};
+ const send=async text=>page.evaluate(text=>window.recallTest.sendText(text),text);
  for(const phrase of ['我不记得放哪里了，你帮我看看之前我放在哪里了','白色纸杯上次放在哪里','帮我找纸杯']){
   await send(phrase);assert.match(await page.locator('#chat').innerText(),/纸杯在书桌上，电脑左侧/);
  }
@@ -33,7 +33,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),assert=require('n
   ]));
  });
  await page.reload();await page.waitForFunction(()=>!!window.recallTest);
- await page.selectOption('#place-mode','home');
+ await page.evaluate(()=>window.recallTest.speak('我在家了'));
  const headphoneData=await page.evaluate(()=>localStorage.getItem('spatial-memory.records.v1'));
  for(const text of ['我找不到我的白色耳机了，帮我找一下在哪里','帮我寻找白色耳机','我的物品在哪']){
   await send(text);const answer=await page.locator('#chat .chat-turn').last().innerText();assert.match(answer,/白色耳机在桌面黑色键盘右侧/);assert.doesNotMatch(answer,/多条|可能|抽屉|显示器后面/);

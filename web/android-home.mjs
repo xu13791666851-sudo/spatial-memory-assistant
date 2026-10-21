@@ -1,14 +1,15 @@
-import {installRetroSkin} from './retro-design.mjs';
+import {installCameraHome} from './camera-home.mjs';
 import {UnifiedHome} from './unified-home.mjs';
 import {ConversationView} from './conversation.mjs';
 import {installTextComposer} from './text-composer.mjs';
 import {interfaceCommand} from './interface-commands.mjs';
 import {containedBox} from './target-overlay.mjs';
 import {targetClasses} from './yolo-core.mjs';
+import {placeIntent} from './context.mjs';
 
 // This UI never opens a browser camera, loads WASM, or calls the cloud itself.
 const $=id=>document.getElementById(id),bridge=window.NativeAssistant,pending=new Map();
-let serial=0,items=[],native={running:false,target:null,searchState:'IDLE'},paused=false,lastAnswer='',place=localStorage.getItem('native-place')||'home',connection='DISCONNECTED',frame=null,frameTimer;
+let serial=0,items=[],native={running:false,target:null,searchState:'IDLE'},paused=false,lastAnswer='',place=localStorage.getItem('native-place')||'explore',connection='DISCONNECTED',frame=null,frameTimer,actionPending=false;
 function call(method,params={}){
  if(!bridge)return Promise.reject(Error('请在安卓测试应用中打开此界面。'));
  return new Promise((resolve,reject)=>{const id=String(++serial),timer=setTimeout(()=>{pending.delete(id);reject(Error('操作等待超时，请重试。'));},method==='provision'?45000:25000);pending.set(id,{resolve,reject,timer});bridge.postMessage(JSON.stringify({id,method,params}));});
@@ -17,6 +18,7 @@ if(bridge)bridge.onmessage=e=>{let message;try{message=JSON.parse(e.data);}catch
 function notice(text){$('notice').textContent=text;$('notice').hidden=false;setTimeout(()=>$('notice').hidden=true,5000);}
 function answer(text,meta={}){if(!text||text===lastAnswer)return;lastAnswer=text;$('latest-answer').textContent=text;if($('screen-reader-mode').checked)$('answer-live').textContent=text;conversation.add(text,false,meta);}
 const runtime={
+ place:()=>place,
  memory:{all:()=>items,answer:name=>{const r=items.find(x=>x.name===name);return r?`${r.name}上次记录：${r.location}。`:'没有读到这条记录。';}},
  targetOverlayState:()=>null,
  taskState:()=>({target:native.target,awaiting_save_clarification:native.searchState==='LEARNING',search:{target:native.target,state:paused?'paused':native.searchState==='GUIDING'?'found':['SEARCHING','VERIFYING'].includes(native.searchState)?'searching':'idle',notice:native.message||''}}),
@@ -31,9 +33,11 @@ async function editMemory(){const r=home.editing;if(!r)return;const p={id:r.id,r
 $('memory-edit-form').onsubmit=e=>{e.preventDefault();editMemory();};
 $('memory-delete-confirm').onclick=async()=>{try{const result=await call('deleteMemory',home.deleting);items=result.items;home.renderMemories();$('memory-delete-dialog').close();$('memory-editor').close();answer(result.answer);}catch(e){$('memory-delete-error').hidden=false;$('memory-delete-error').textContent=e.message;}};
 
-async function perform(method){try{await call(method);if(method==='pause')paused=true;if(['start','resume'].includes(method)){paused=false;conversation.begin();}if(method==='stop'){paused=false;conversation.end();}sync();return true;}catch(e){notice(e.message);return false;}}
+async function perform(method){if(actionPending)return false;actionPending=true;$('main-toggle').disabled=true;try{await call(method);if(method==='pause')paused=true;if(['start','resume'].includes(method)){paused=false;conversation.begin();}if(method==='stop'){paused=false;conversation.end();}sync();return true;}catch(e){notice(e.message);return false;}finally{actionPending=false;$('main-toggle').disabled=false;}}
+function switchPlace(text){const requested=placeIntent(text);if(!requested)return false;place=requested;localStorage.setItem('native-place',place);$('scene-label').textContent=place==='home'?'家中场景':'普通场景';return true;}
 async function send(text){
  text=text.trim();if(!text)return false;
+ if(switchPlace(text)){conversation.add(text,true);const receipt=place==='home'?'已切换到家中场景。':'已切换到普通场景。';answer(receipt);call('replay',{text:receipt}).catch(e=>notice(e.message));return true;}
  const action=interfaceCommand(text);if(action){conversation.add(text,true);home.command(action);return true;}
  if(/^(?:暂停寻找|暂停找物)$/.test(text))return perform('pause');
  if(/^(?:继续找|继续寻找)$/.test(text)&&paused){if(!await perform('resume'))return false;if(native.target)await call('search',{target:native.target});return true;}
@@ -45,7 +49,7 @@ function clearFrame(){frame=null;clearTimeout(frameTimer);photo.hidden=true;box.
 function sync(){
  $('end-conversation').hidden=false;$('end-conversation').disabled=!native.running&&!paused;$('replay').disabled=!lastAnswer;
  $('voice-state').textContent=paused?'已暂停':native.running?(connection==='CONNECTED'?'本机 YOLO · 千问已连接':'本机 YOLO · 千问连接中'):'手机摄像头 · 尚未开始';
- $('connection').textContent=native.error||native.message||'安卓本机识别已就绪';$('place-mode').value=place;
+ $('connection').textContent=native.error||native.message||'安卓本机识别已就绪';$('scene-label').textContent=place==='home'?'家中场景':'普通场景';
  if(!native.running||paused)clearFrame();home.syncState();
 }
 const preview=$('camera-preview'),photo=document.createElement('img');photo.id='native-preview';photo.alt='手机或硬件的当前摄像头画面';photo.hidden=true;preview.hidden=false;preview.append(photo);
@@ -62,12 +66,12 @@ function drawBox(){
 }
 function overlap(a,b){const intersection=Math.max(0,Math.min(a[2],b[2])-Math.max(a[0],b[0]))*Math.max(0,Math.min(a[3],b[3])-Math.max(a[1],b[1]));return intersection/((a[2]-a[0])*(a[3]-a[1])+(b[2]-b[0])*(b[3]-b[1])-intersection||1);}
 window.nativeEvent=({type,data})=>{
- if(type==='state'){native=data;paused=data.paused||paused;sync();if(data.error)notice(data.error);if(data.searchState==='LEARNING')$('latest-answer').textContent=data.message;}
+ if(type==='state'){native=data;paused=!!data.paused;sync();if(data.error)notice(data.error);if(data.searchState==='LEARNING')$('latest-answer').textContent=data.message;}
  if(type==='connection'){connection=data.state;sync();}
  if(type==='answer')answer(data.text,{saved:/已经记住/.test(data.text)});
  if(type==='memories'){items=data.items;home.renderMemories();}
  if(type==='transcript'){
-  if(data.role==='user'){conversation.add(data.text,true);const action=interfaceCommand(data.text);if(action)home.command(action);}
+  if(data.role==='user'){conversation.add(data.text,true);switchPlace(data.text);const action=interfaceCommand(data.text);if(action)home.command(action);}
   else answer(data.text);
  }
  if(type==='frame'){
@@ -75,9 +79,8 @@ window.nativeEvent=({type,data})=>{
  }
 };
 photo.onload=drawBox;new ResizeObserver(drawBox).observe(preview);
-$('main-toggle').onclick=()=>perform(native.running?'pause':paused?'resume':'start');$('camera-start-target').onclick=$('video-again').onclick=$('camera-open').onclick=()=>perform('start');$('camera-send').onclick=()=>send('帮我看看眼前有什么');$('camera-close').onclick=$('video-stop').onclick=()=>perform('stop');$('end-conversation').onclick=()=>perform('stop');$('pause').onclick=()=>perform(paused?'resume':'pause');
+$('main-toggle').onclick=()=>perform(paused?'resume':native.running?'stop':'start');$('camera-start-target').onclick=$('video-again').onclick=$('camera-open').onclick=()=>perform('start');$('camera-send').onclick=()=>send('帮我看看眼前有什么');$('camera-close').onclick=$('video-stop').onclick=()=>perform('stop');$('end-conversation').onclick=()=>perform('stop');$('pause').onclick=()=>perform(paused?'resume':'pause');
 $('replay').onclick=()=>call('replay',{text:lastAnswer}).catch(e=>notice(e.message));$('settings-close').onclick=()=>$('settings-dialog').close();
-$('place-mode').onchange=()=>{place=$('place-mode').value;localStorage.setItem('native-place',place);};
 $('answer-size').onchange=()=>{document.documentElement.style.setProperty('--answer-size',$('answer-size').value+'px');localStorage.setItem('native-answer-size',$('answer-size').value);};
 document.documentElement.style.setProperty('--answer-size',(localStorage.getItem('native-answer-size')||'18')+'px');
 
@@ -91,8 +94,8 @@ $('settings-form').onsubmit=async e=>{e.preventDefault();try{const s=await call(
 $('search-cancel').onclick=()=>call('cancel');$('search-pause').onclick=()=>perform(paused?'resume':'pause');
 installTextComposer({document,window,send,state:()=>({paused})});
 $('pixel-records-home').onclick=()=>home.close();
-installRetroSkin({document,state:()=>({active:native.running||paused,ready:native.running||paused,paused,source:native.source==='ESP32'?'硬件摄像头':'手机摄像头'})});
-window.nativeBack=()=>{for(const id of ['text-composer','memory-delete-dialog','memory-editor','records-dialog','settings-dialog']){if($(id).open){$(id).close();return true;}}if(native.running){perform('stop');return true;}return false;};
+installCameraHome({document,runtime,state:()=>({active:native.running||paused,ready:native.running||paused,paused,camera:native.running,opening:false})});
+window.nativeBack=()=>{for(const id of ['text-composer','memory-delete-dialog','memory-editor','settings-dialog','records-dialog']){if($(id).open){$(id).close();return true;}}if(native.running||paused){perform('stop');return true;}return false;};
 document.addEventListener('visibilitychange',()=>{if(document.hidden)clearFrame();});
 
 // Hardware controls live inside the existing settings entrance; the homepage is unchanged.

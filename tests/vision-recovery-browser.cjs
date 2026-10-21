@@ -36,7 +36,7 @@ await page.route('**/*',async route=>{
 });
 await page.goto('https://ui.test/');await page.waitForFunction(()=>window.searchTest);
 await page.evaluate(()=>{document.getElementById('screen-reader-mode').checked=true;const r=window.searchTest.runtime;r.setPlace('home');r.memory.saveVisual('绿色水杯',{unique:true,location_supported:true,anchor:'木桌',location:'木桌上，电脑左侧',appearance:'绿色杯身，有白色杯盖'},new Date().toISOString());});
-await page.getByRole('button',{name:'开启摄像头和语音对话',exact:true}).click();await page.waitForFunction(()=>window.searchTest.bridge()?.configured);await page.waitForFunction(()=>document.querySelector('#chat').textContent.includes('你好，我是小忆'));
+await page.getByRole('button',{name:'开始',exact:true}).click();await page.waitForFunction(()=>window.searchTest.bridge()?.configured);await page.waitForFunction(()=>document.querySelector('#chat').textContent.includes('你好，我是小忆'));
 const before=await page.evaluate(()=>localStorage.getItem('spatial-memory.records.v1'));
 await page.evaluate(()=>window.searchTest.sendText('帮我找绿色水杯'));
 await page.waitForFunction(()=>document.getElementById('search-status').textContent.includes('自动重连'));
@@ -46,6 +46,6 @@ assert.equal(await page.evaluate(()=>window.streamSockets.length),2);
 await page.waitForFunction(()=>window.searchTest.runtime.taskState().search.state==='found',null,{timeout:20000});
 assert.equal(http,2);assert.equal(new Set(images).size,2);assert.equal(await page.evaluate(()=>window.streamSockets.length),2);
 assert.equal(await page.evaluate(()=>document.getElementById('preview').srcObject.getVideoTracks()[0].readyState),'live');assert.equal(await page.evaluate(()=>localStorage.getItem('spatial-memory.records.v1')),before);assert.match(await page.locator('#latest-answer').innerText(),/找到了绿色水杯/);
-await page.click('#end-conversation');assert.deepEqual(errors,[]);
+await page.click('#main-toggle');assert.deepEqual(errors,[]);
 console.log('PASS recovery: failed sockets retry once then HTTP finds target, fresh images, camera and memory retained');
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
