@@ -49,12 +49,13 @@ class PhoneCameraSource(
         pacer.reset()
         try {
             val cameraProvider = awaitProvider()
-            val preview = Preview.Builder().build().also { previewView?.surfaceProvider?.let(it::setSurfaceProvider) }
+            val resolution = ResolutionSelector.Builder().setResolutionStrategy(
+                ResolutionStrategy(Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER),
+            ).build()
+            val preview = Preview.Builder().setResolutionSelector(resolution).build().also { previewView?.surfaceProvider?.let(it::setSurfaceProvider) }
             val analysis = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .setResolutionSelector(ResolutionSelector.Builder().setResolutionStrategy(
-                    ResolutionStrategy(Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER),
-                ).build())
+                .setResolutionSelector(resolution)
                 .build()
             val executor = Executors.newSingleThreadExecutor().also { analyzerExecutor = it }
             analysis.setAnalyzer(executor) { image -> onImage(image) }

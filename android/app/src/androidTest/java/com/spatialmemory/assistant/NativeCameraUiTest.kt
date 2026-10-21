@@ -90,10 +90,11 @@ class NativeCameraUiTest {
                 controller = field.get(activity) as AssistantController
                 activity.findViewById<Button>(R.id.native_voice).performClick()
             }
-            val deadline = System.currentTimeMillis() + 40_000
+            // ARM-only vendor libraries run under translation on the x86 test emulator.
+            val deadline = System.currentTimeMillis() + 120_000
             while (controller!!.state.value.yoloLatencyMs == null && System.currentTimeMillis() < deadline) Thread.sleep(200)
             assertTrue("CameraX must be running", controller!!.state.value.running)
-            assertNotNull("Actual camera frames must reach YOLO", controller!!.state.value.yoloLatencyMs)
+            assertNotNull("Actual camera frames must reach YOLO: ${controller!!.state.value}", controller!!.state.value.yoloLatencyMs)
             scenario.onActivity { it.findViewById<Button>(R.id.native_voice).performClick() }
             val end = System.currentTimeMillis() + 10_000
             while (controller!!.state.value.running && System.currentTimeMillis() < end) Thread.sleep(100)
