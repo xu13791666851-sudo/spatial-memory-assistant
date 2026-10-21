@@ -1,7 +1,7 @@
 name: Complete phone web demo
 on:
   push:
-    branches: [main, codex/hackathon-web-demo]
+    branches: [main, codex/hackathon-web-demo, codex/web-parity-demo]
   workflow_dispatch:
 permissions:
   contents: read
