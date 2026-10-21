@@ -42,5 +42,6 @@
 /.android-pages/
 /.demo-site/
 /.demo-data/
+/.playwright-cli/
 **/*.sqlite3
 **/*.sqlite3-*

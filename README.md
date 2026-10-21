@@ -11,6 +11,7 @@ I SEE YOU 面向视障用户，把摄像头画面、语音对话和物品记忆�
 | 你想做什么 | 入口 | 当前状态 |
 | --- | --- | --- |
 | 直接打开已上线的基础网页 | [I SEE YOU 网页](https://i-see-you-spatial-memory.pages.dev/video/) | 手机或电脑浏览器可访问；使用浏览器保存记录 |
+| 试用浏览器内的 YOLO 找物 | [YOLO 测试页](https://i-see-you-yolo-preview.pages.dev/video/) | 已上线的独立测试入口；仍不是下方的完整三样本演示 |
 | 查看完整手机摄像头演示 | [演示说明](docs/hackathon-web-demo.md) | 源码和打包流程已在 `main`；需要支持 Python 的服务单独部署，**上方网址不是这个完整演示** |
 | 获取安卓测试包 | [安卓说明](android/README.md) · [最近的构建记录](https://github.com/xu13791666851-sudo/spatial-memory-assistant/actions/workflows/android-test.yml) | 构建记录提供有期限的安装包；安卓真机麦克风和实体 ESP32 尚待验证 |
 | 查看设计与部署资料 | [文档目录](docs/README.md) | 图稿、测试说明、平台配置和历史记录集中在这里 |

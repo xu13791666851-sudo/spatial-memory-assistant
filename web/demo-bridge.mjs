@@ -6,6 +6,7 @@ window.WebDemoBridge=true;
 const $=id=>document.getElementById(id);
 let csrf='',state={},cursor=0,rev=-1,stream=null,voice=null,voiceReady=false,context=null,source=null,worklet=null,gain=null,active=false,timer=null,pollTimer=null,generation=0,controller=null,nextAudio=0,lastBox=null;
 const sounds=new Set(),capture=document.createElement('canvas'),motion=document.createElement('canvas');motion.width=24;motion.height=18;
+let capturedMark=null;
 const video=$('preview');
 const bootstrap=fetch('/api/demo/bootstrap',{cache:'no-store'}).then(async r=>{if(!r.ok)throw Error('演示后台暂时未连接，请刷新重试。');const data=await r.json();csrf=data.csrf;return data;});
 function emit(type,data){window.nativeEvent?.({type,data});}
@@ -26,7 +27,11 @@ function play(audio){
 function apply(data){
  if(data.rev>=rev){rev=data.rev;state=data.state;emit('state',state);emit('memories',{items:data.memories});}
  for(const event of data.events||[]){if(event.id<=cursor)continue;cursor=event.id;emit(event.type,event.data);if(event.type==='answer')speak(event.data.text,!!event.data.cloud);}
- if(data.frame&&active&&data.state.epoch===state.epoch){emit('frame',data.frame);const box=state.verifiedBox;if(box){try{lastBox={mark:fingerprint(video,box,motion),box};}catch{lastBox=null;}}}
+ if(data.frame&&active&&data.state.epoch===state.epoch){
+  emit('frame',data.frame);
+  try{window.dispatchEvent(new CustomEvent('demo-detections',{detail:{...data.frame,mark:capturedMark}}));}catch{}
+  const box=state.verifiedBox;if(box){try{lastBox={mark:fingerprint(video,box,motion),box};}catch{lastBox=null;}}
+ }
 }
 async function api(path,body,signal){
  const response=await fetch('/api/demo/'+path,{method:body===undefined?'GET':'POST',headers:body===undefined?{}:{'Content-Type':'application/json','X-Demo-CSRF':csrf},...(body===undefined?{}:{body:JSON.stringify({...body,since:cursor})}),signal,cache:'no-store'});
@@ -34,6 +39,7 @@ async function api(path,body,signal){
 }
 function stopLocal(){
  active=false;generation++;clearTimeout(timer);clearTimeout(pollTimer);controller?.abort();controller=null;lastBox=null;
+ window.dispatchEvent(new CustomEvent('demo-detections',{detail:null}));
  if(voice){try{voice.send(JSON.stringify({type:'stop'}));}catch{}voice.close();voice=null;}voiceReady=false;
  worklet?.disconnect();source?.disconnect();gain?.disconnect();worklet=source=gain=null;
  stream?.getTracks().forEach(track=>track.stop());stream=null;video.srcObject=null;video.style.display='none';
@@ -75,6 +81,7 @@ async function nextFrame(token){
   if(video.readyState>=2){
    const scale=Math.min(1,960/video.videoWidth);capture.width=Math.round(video.videoWidth*scale);capture.height=Math.round(video.videoHeight*scale);
    capture.getContext('2d').drawImage(video,0,0,capture.width,capture.height);
+   capturedMark=fingerprint(video,null,motion);
    const capturedAt=Date.now();controller=new AbortController();const timeout=setTimeout(()=>controller?.abort(),15000);
    try{await api('frame',{id:capturedAt,capturedAt,epoch:state.epoch,image:capture.toDataURL('image/jpeg',.8).split(',')[1]},controller.signal);}finally{clearTimeout(timeout);controller=null;}
   }
