@@ -1,10 +1,9 @@
-import {requestText} from './memory.mjs';
 import {asksHistory} from './interaction.mjs';
-import {searchTarget} from './find-dialogue.mjs';
+import {searchTarget,searchRequestText} from './find-dialogue.mjs';
 
 export function continuousTarget(text,focus=''){
   if(asksHistory(text)||/找不到|找到了|找不着/.test(text))return '';
-  const value=requestText(text).replace(/^(?:开始|持续|再次|重新|再)(?=找|寻找)/,'');
+  const value=searchRequestText(text);
   return /^(?:找|寻找)/.test(value)?searchTarget(value,focus):'';
 }
 
@@ -44,6 +43,7 @@ export class ContinuousSearch{
     const match=frameStatus==='clear'&&result.target_visible===true&&
       (!this.task.reference_appearance||result.appearance_match?.status==='match');
     this.hits=match?this.hits+1:0;
+    // A local category hit is never a substitute for a second fresh cloud view.
     if(this.hits>=2){this.clearTimer(this.expiry);this.state='found';this.publish();return true;}
     this.state=match?'confirming':'searching';this.publish();this.schedule();return false;
   }

@@ -1,0 +1,18 @@
+import fs from 'node:fs/promises';
+await import('./build-android-assets.mjs');
+const target='.demo-site';
+await fs.mkdir(target,{recursive:true});
+await fs.cp('android/app/src/main/assets/site',target,{recursive:true});
+for(const name of ['demo-bridge.mjs','demo-home.mjs','demo-mic.js'])await fs.copyFile('web/'+name,target+'/static/'+name);
+let html=await fs.readFile(target+'/index.html','utf8');
+html=html.replace('/static/android-home.mjs','/static/demo-home.mjs').replace('</head>','<link rel="stylesheet" href="/static/demo.css"></head>');
+html=html.replaceAll('安卓测试版使用本机 YOLO、三次外观样本记忆、千问语音与图片复核；硬件需要同一局域网。','网页演示使用手机摄像头，由后台运行 YOLO、保存三个外观样本并由千问复核；硬件另行演示。').replaceAll('离开应用会停止识别和录音。','离开页面会停止摄像头和录音。').replaceAll('安卓麦克风','手机麦克风').replaceAll('安装包不含长期密钥','网页不含长期密钥');
+await fs.writeFile(target+'/index.html',html);
+let adapter=await fs.readFile('web/android-home.mjs','utf8');
+adapter=adapter.replaceAll('本机 YOLO','YOLO 后台').replaceAll('安卓本机','网页后台').replaceAll('本机外观','外观').replaceAll('安卓核心','网页演示').replace("photo.hidden=false;$('camera-empty').hidden=true;","photo.hidden=!!window.WebDemoBridge;$('camera-empty').hidden=true;");
+adapter=adapter.replace("if(data.role==='user'){conversation.add(data.text,true);", "if(data.role==='user'&&window.WebDemoBridge){void send(data.text).catch(e=>notice(e.message));return;}if(data.role==='user'){conversation.add(data.text,true);");
+adapter=adapter.replace("await call('text',{text});conversation.add(text,true);", "conversation.add(text,true);await call('text',{text});");
+adapter=adapter.replace("const action=interfaceCommand(text);if(action){", "if(/^(关闭摄像头|停止观察|停止视频)[。！？!?]*$/.test(text)){conversation.add(text,true);return perform('stop');}const action=interfaceCommand(text);if(action?.type==='cancel-confirmation'){conversation.add(text,true);await call('cancel');return true;}if(action){");
+await fs.writeFile(target+'/static/android-home.mjs',adapter);
+await fs.writeFile(target+'/static/demo.css',`#preview{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}#native-preview{display:none!important}.demo-standalone{padding:12px;margin:0;font-size:16px}.demo-standalone a{color:#17448c}`);
+console.log('Web demonstration built: original pixel UI with actual browser media and server core.');

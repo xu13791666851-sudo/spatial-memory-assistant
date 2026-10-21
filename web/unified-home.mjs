@@ -1,3 +1,5 @@
+import {TargetOverlay} from './target-overlay.mjs';
+import {perceptionNotice} from './yolo-focus.mjs';
 // Presentation and direct manipulation of the existing assistant. Opening a
 // record never starts a session or moves/recreates the mounted video element.
 export class UnifiedHome{
@@ -26,6 +28,7 @@ export class UnifiedHome{
     $('memory-delete-dialog').addEventListener('close',()=>{if($('memory-editor').open)$('memory-delete').focus();});
     const observer=new MutationObserver(()=>this.syncState());
     for(const id of ['latest-answer','voice-state','connection','chat'])observer.observe($(id),{childList:true,characterData:true,subtree:true});
+    this.targetOverlay=new TargetOverlay({document,read:()=>runtime.targetOverlayState?.()});
     this.syncState();
   }
   announce(text,read=false){this.$('answer-live').textContent=text;if(read&&!this.$('screen-reader-mode').checked)this.actions.replay(text);}
@@ -39,15 +42,19 @@ export class UnifiedHome{
     else{this.collapsed=false;this.document.body.dataset.layout=view==='video'?'video':'home';}
     this.document.querySelector('.camera-panel').classList.toggle('collapsed',this.collapsed);
     this.$('collapse-camera').textContent=this.collapsed?'展开画面':'收起画面';this.$('collapse-camera').setAttribute('aria-expanded',String(!this.collapsed));
+    this.targetOverlay?.sync();
     this.$('expand-video').textContent=view==='video'?'恢复首页':'放大画面';this.$('expand-video').setAttribute('aria-pressed',String(view==='video'));
   }
   syncState(){
+    this.targetOverlay?.sync();
     const state=this.state(),task=this.runtime.taskState?.();const name=state.active?task?.target:null;
     const scan=task?.search,searching=state.active&&scan&&['searching','confirming','paused'].includes(scan.state);
     this.$('search-controls').hidden=!searching;
     this.$('search-pause').disabled=state.paused;
     this.$('search-cancel').disabled=state.paused;
-    const status=scan?.state==='confirming'?'看到候选，正在用新画面核对。请保持镜头稳定。':scan?.notice?scan.notice:scan?.state==='paused'?'寻找已暂停，可继续或取消。':'正在自动寻找，请缓慢扫视并在每个区域停留。';
+    const perception=this.runtime.perceptionState?.();
+    const localStatus=perception?.status?perceptionNotice(perception.status):'';
+    const status=(scan?.state==='confirming'?'看到候选，正在用新画面核对。请保持镜头稳定。':scan?.notice?scan.notice:scan?.state==='paused'?'寻找已暂停，可继续或取消。':'正在自动寻找，请缓慢扫视并在每个区域停留。')+(localStatus?' '+localStatus:'');
     if(this.$('search-status').textContent!==status)this.$('search-status').textContent=status;
     const pauseLabel=scan?.state==='paused'?'继续寻找':'暂停寻找';
     if(this.$('search-pause').textContent!==pauseLabel)this.$('search-pause').textContent=pauseLabel;

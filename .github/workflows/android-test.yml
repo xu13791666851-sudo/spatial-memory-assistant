@@ -1,0 +1,44 @@
+name: Android original UI test
+on:
+  push:
+    branches: [codex/handoff-core-original-ui]
+  workflow_dispatch:
+concurrency:
+  group: android-core-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci
+      - run: node scripts/build-android-assets.mjs
+      - run: node --test tests/android-gateway.test.mjs
+      - run: chmod +x android/gradlew
+      - run: ./gradlew testDebugUnitTest lintDebug assembleDebug --no-daemon
+        working-directory: android
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: I-SEE-YOU-android-test
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+            android/app/build/reports/tests/
+            android/app/build/reports/lint-results-debug.html
+          if-no-files-found: error
+          retention-days: 14

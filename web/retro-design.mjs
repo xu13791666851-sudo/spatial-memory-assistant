@@ -31,7 +31,7 @@ export function installRetroSkin({document,state}){
  const $=id=>document.getElementById(id);
  const label=(el,name,text)=>{if(!el)return;const key=name+'|'+text;if(el.dataset.pixelLabel===key&&el.querySelector('.pixel-icon')&&el.textContent===text)return;el.dataset.pixelLabel=key;el.innerHTML=icon(name)+`<span>${text}</span>`;};
  label($('replay'),'replay','重听');label($('end-conversation'),'stop','结束');
- const update=()=>{const s=state(),text=s.active?(s.ready?(s.paused?'继续':'暂停'):'取消开启'):'开始';label($('main-toggle'),s.active&&s.ready&&!s.paused?'pause':'play',text);const status=s.active?(s.paused?'已暂停':s.ready?'正在聆听':'正在连接'):'尚未开始';$('source-label').textContent='手机摄像头 · '+status;$('unified-status').classList.toggle('is-listening',s.ready&&!s.paused);};
+ const update=()=>{const s=state(),text=s.active?(s.ready?(s.paused?'继续':'暂停'):'取消开启'):'开始';label($('main-toggle'),s.active&&s.ready&&!s.paused?'pause':'play',text);const status=s.active?(s.paused?'已暂停':s.ready?'正在聆听':'正在连接'):'尚未开始';$('source-label').textContent=(s.source||'手机摄像头')+' · '+status;$('unified-status').classList.toggle('is-listening',s.ready&&!s.paused);};
  const observer=new MutationObserver(update);for(const id of ['main-toggle','voice-state','connection'])observer.observe($(id),{childList:true,subtree:true,characterData:true});update();
  // Keep the descriptive accessible name supplied by the conversation component.
  const decorate=()=>{for(const el of document.querySelectorAll('.message-replay'))label(el,'play','重听');};

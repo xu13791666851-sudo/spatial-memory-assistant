@@ -1,6 +1,9 @@
 import {VisionStream} from './vision-stream.mjs';
 import {VISION_STREAM_URL} from './vision-stream-config.mjs';
 import {ContinuousSearch,continuousTarget} from './continuous-search.mjs';
+import {LocalYolo} from './yolo-local.mjs';
+import {imageFingerprint,rememberedTarget,overlayCurrent} from './target-overlay.mjs';
+import {cropCandidate,observeFocusedFrame,validCandidate} from './yolo-focus.mjs';
 import {FindDialogue,searchTarget,locationQuery,asksCurrentView} from './find-dialogue.mjs';
 import {Memory,rememberCommand} from './memory.mjs';
 import {ObservationGate,asksHistory,currentViewIntent} from './interaction.mjs';
@@ -52,13 +55,14 @@ export function createRuntime(env){
       this.channels=new Set();this.calls=new Set();this.replayResponses=new Set();this.replayItems=new Set();this.requestController=new AbortController();this.mediaGeneration=0;this.videoId=null;
       this.scene=new (env.ObservationGate||ObservationGate)({requireTransmission:false,settleMs:100,pollMs:80});this.lastUserText='';this.sceneGoal='';this.lastObservedAt=null;this.replyPending=false;this.listening=false;activeBridge=this;
       this.audio=document.getElementById('remote-audio');
+      this.localYolo=env.localYoloFactory?env.localYoloFactory():new LocalYolo();
       this.search=new ContinuousSearch({...env.searchClock,
         observe:(goal,task)=>{
           if(this.closed||this.paused||document.hidden){this.search.pause();return true;}
           if(this.listening||this.awaitingTranscript||this.active||this.replyPending||this.localSpeechToken||this.queuedReply||this.sceneCommit)return false;
           this.requestCurrentView(goal,task);return true;
         },
-        onState:state=>{if(!['searching','confirming'].includes(state.state)){this.visionStream?.close();this.visionStream=null;}this.emit({type:'app.search_state',...state});},
+        onState:state=>{if(['idle','paused'].includes(state.state))this.targetOverlay=null;if(!['searching','confirming'].includes(state.state)){this.visionStream?.close();this.visionStream=null;}this.emit({type:'app.search_state',...state});},
         onExpire:()=>this.dialogueAnswer('这轮寻找已暂停，还没有确认找到。可以换个区域，再说“继续找”。')});
       queueMicrotask(()=>{if(!this.closed)this.onopen?.();});
     }
@@ -84,6 +88,7 @@ export function createRuntime(env){
       return true;
     }
     cancelObservation(){
+      this.targetOverlay=null;
       if(this.search.state==='found')this.search.stop();else this.search.pause();
       this.scene.stop();this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.sceneTask=null;
       if(this.observationCall){this.toolResult(this.observationCall.id,{camera_active:false,error:'用户已提出新的请求。'});this.observationCall=null;}
@@ -108,11 +113,11 @@ export function createRuntime(env){
       try{
         if(hasVideo(this.mode)&&(resume||scanTarget)){
           if(resume){dialogue.saving=null;dialogue.focus(this.search.task.target);dialogue.allowHistory=this.search.task.allowHistory;}
-          if(scanTarget){dialogue.saving=null;dialogue.focus(scanTarget);dialogue.allowHistory=context.place==='home';}
+          if(scanTarget){dialogue.saving=null;dialogue.focus(scanTarget);dialogue.allowHistory=context.place==='home'||/(?:再|重新|再次)/.test(String(text).split(/找|寻找/)[0]);}
           const records=dialogue.allowHistory?memory.find(dialogue.target):[];
           if(records.length>1){dialogue.choices=records;this.search.stop();this.dialogueAnswer(memory.answer(dialogue.target)+' 请说出要找的具体物品，再说“帮我找”。');return true;}
           plan=dialogue.observation();context.focus=dialogue.target;
-          const hint=records.length===1?'上次记录在'+records[0].location+'。':'';
+          const hint=records.length===1?'已读到“'+records[0].name+'”的本机记录。上次记录在'+records[0].location+'。'+(records[0].appearance?'会按已保存的外观核对。':'这条记录尚未保存清晰外观，本轮先按物品描述寻找。'):dialogue.allowHistory?'没有读到“'+dialogue.target+'”的已保存记录，本轮先按描述寻找。':'';
           this.dialogueAnswer(hint+'开始寻找'+dialogue.target+'。请缓慢移动镜头，在每个区域停留一会儿，找到后我会提醒你。说“暂停寻找”或“取消”可以停止。');
           this.search.intervalMs=(env.visionStreamUrl??VISION_STREAM_URL)?2000:8000;this.search.start(plan);return true;
         }
@@ -132,6 +137,7 @@ export function createRuntime(env){
       return true;
     }
     placeChanged(){
+      this.targetOverlay=null;
       this.search.stop();
       this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.scene.stop();
       if(this.observationCall){this.toolResult(this.observationCall.id,{camera_active:false,error:'使用场景已切换，请重新观察。'});this.observationCall=null;}
@@ -165,6 +171,10 @@ export function createRuntime(env){
       if(msg.type==='resume'){this.paused=false;return;}
       if(msg.type==='video_start'&&hasVideo(this.mode)&&!this.paused){
         if(![10,30,60,120,300,600].includes(msg.duration)||this.videoId)return;
+        if(this.localYolo.closed)this.localYolo=env.localYoloFactory?env.localYoloFactory():new LocalYolo();
+        const detector=this.localYolo;
+        this.lastLocalPerception={status:detector.enabled?(detector.ready?'ready':'loading'):'disabled'};
+        void detector.warm().then(ready=>{if(!this.closed&&this.localYolo===detector&&!detector.closed&&detector.enabled){this.lastLocalPerception={status:ready?'ready':'unavailable'};this.search.publish();}});
         this.videoId=msg.id;this.deadline=Date.now()+msg.duration*1000;this.frames=0;this.sceneGoal=this.observationCall?.goal||String(msg.goal||'').slice(0,300);if(this.sceneGoal&&context.recent.at(-1)!==this.sceneGoal)context.note(this.sceneGoal);this.userSpoke=false;
         const target=searchTarget(this.sceneGoal,dialogue.target);if(!this.sceneTask&&target&&hasMemory(this.mode)){dialogue.focus(target);dialogue.allowHistory=context.place==='home';this.sceneTask=dialogue.observation().task;}
         this.videoTimer=setTimeout(()=>this.endVideo('已到观察时长，摄像头已关闭。语音可以继续。'),msg.duration*1000);
@@ -253,21 +263,51 @@ export function createRuntime(env){
         if(stream)await stream.open(scene.controller.signal);
         if(this.closed||this.sceneCommit!==scene||this.paused)return;
         if(stream)this.search.connected();
-        const image=this.captureScene();scene.observedAt=new Date().toISOString();this.search.requested();
+        this.targetOverlay=null;this.search.publish();
+        let image,capturedAt,localCandidate;
+        const capture=()=>{const image=this.captureScene();capturedAt=new Date().toISOString();return image;};
+        if(scene.task?.target&&!scene.task.saveToken&&!scene.task.identify&&this.localYolo.enabled){
+          const local=await this.localYolo.prepare({target:scene.task.target,capture,signal:scene.controller.signal,
+            stillCurrent:()=>!this.closed&&!this.paused&&!document.hidden&&this.sceneCommit===scene&&this.videoId===scene.id&&this.mediaGeneration===scene.generation});
+          image=local.image;localCandidate=local.stableCandidate===true&&validCandidate(local.candidate)?local.candidate:null;this.lastLocalPerception=local.local;this.search.publish();
+        }else image=capture();
+        if(this.closed||this.paused||this.sceneCommit!==scene||this.videoId!==scene.id||this.mediaGeneration!==scene.generation)return;
+        if(localCandidate){
+          let record;try{record=rememberedTarget(memory.find(scene.task.target),scene.task);}catch{}
+          if(record){
+            let signature;try{signature=await (env.imageFingerprint||imageFingerprint)(image,localCandidate.box);}catch{}
+            if(signature&&this.sceneCommit===scene&&!this.closed&&!this.paused){
+              this.targetOverlay={token:crypto.randomUUID(),target:scene.task.target,record,box:localCandidate.box.slice(),fingerprint:signature,capturedAt:Date.parse(capturedAt||new Date().toISOString()),status:'pending'};
+              this.search.publish();
+            }
+          }
+        }
+        if(this.closed||this.paused||this.sceneCommit!==scene||this.videoId!==scene.id||this.mediaGeneration!==scene.generation)return;
+        scene.observedAt=capturedAt||new Date().toISOString();this.search.requested();
         const deviceSpeech=!!document.getElementById('fast-describe')?.checked&&(env.supportsSpeech||document.getElementById('screen-reader-mode')?.checked);
         const requestId=crypto.randomUUID(),task=scene.task?{target:scene.task.target,remember:!!scene.task.saveToken,reference_appearance:scene.task.reference_appearance||'',...(scene.task.identify?{identify:true}:{})}:null;
         this.visualPending=true;this.suppressResponse=true;this.stopPlayback();
         const frame={image,goal:scene.goal,request_id:requestId,task};
         let payload;
-        if(stream)payload=await stream.observe(frame,scene.controller.signal);
-        else{
-          const response=await fetcher('/api/vision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(frame),signal:scene.controller.signal});
+        const observe=async input=>{
+          const response=await fetcher('/api/vision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input),signal:scene.controller.signal});
           if(!response.ok){
             if(response.status===429)throw Error('观察请求较频繁，已暂停。稍等片刻后说“继续找”。');
             const error=await response.json().catch(()=>({}));throw Error(error.detail||'这次画面理解没有完成，请重新观察。');
           }
-          payload=await response.json();
+          return response.json();
+        };
+        if(localCandidate){
+          let crop;try{crop=await (env.cropCandidate||cropCandidate)(image,localCandidate);}catch(error){if(scene.controller.signal.aborted)throw error;this.lastLocalPerception={...this.lastLocalPerception,status:'unavailable'};this.search.publish();}
+          if(this.closed||this.paused||this.sceneCommit!==scene||this.videoId!==scene.id||this.mediaGeneration!==scene.generation)return;
+          if(crop){
+            // Two parallel cloud checks per view need a lower request frequency.
+            if(scene.task?.scanId)this.search.intervalMs=Math.max(this.search.intervalMs,14000);
+            payload=await observeFocusedFrame({frame,candidate:localCandidate,crop,observe});
+            if(this.sceneCommit===scene){this.lastLocalPerception={...this.lastLocalPerception,status:payload.focus?.status==='unavailable'?'verification_unavailable':payload.focus?.status||'uncertain'};this.search.publish();}
+          }
         }
+        if(!payload)payload=stream?await stream.observe(frame,scene.controller.signal):await observe(frame);
         if(payload.request_id!==requestId||payload.frame_received!==true||!['clear','uncertain'].includes(payload.frame_status))throw Error('这次没有获取到匹配的画面结果，请重新观察。');
         const result=validateObservation(payload,task);
         if(this.closed||this.paused||this.sceneCommit!==scene||this.videoId!==scene.id||this.mediaGeneration!==scene.generation)return;
@@ -275,8 +315,14 @@ export function createRuntime(env){
         if(scene.task?.scanId){
           if(scene.task.scanId!==this.search.id||!this.search.running)return;
           if(!this.search.accept(result,payload.frame_status)){
+            if(payload.frame_status!=='clear'||result.target_visible!==true||result.appearance_match?.status!=='match'){this.targetOverlay=null;this.search.publish();}
             this.sceneCommit=null;this.visualPending=false;this.suppressResponse=false;this.updatePlayback();return;
           }
+        }
+        if(this.targetOverlay){
+          if(payload.focus?.status==='confirmed'&&payload.frame_status==='clear'&&result.target_visible===true&&result.appearance_match?.status==='match'&&this.targetOverlay.record.appearance)this.targetOverlay.status='confirmed';
+          else this.targetOverlay=null;
+          this.search.publish();
         }
         let outcome={answer:result.answer};
         if(scene.task)outcome=dialogue.complete(scene.task,{...result,observedAt:scene.observedAt});
@@ -297,6 +343,7 @@ export function createRuntime(env){
         }
       }catch(err){
         if(this.closed||this.sceneCommit!==scene||this.videoId!==scene.id)return;
+        this.targetOverlay=null;this.search.publish();
         const message=err.message||'当前画面未能理解，请重新观察。';
         if(scene.task?.scanId&&scene.task.scanId===this.search.id&&this.search.running){
           this.visionStream?.close();this.visionStream=null;
@@ -491,8 +538,10 @@ export function createRuntime(env){
         if(id){this.frames++;this.emit({type:'app.video_frame',id,frames:this.frames});}
       }finally{image.close?.();}
     }
-    clearVideoTrack(){this.mediaGeneration++;this.videoTrack?.stop();this.videoTrack=null;this.videoSender?.replaceTrack(null).catch(()=>{});}
+    clearVideoTrack(){this.targetOverlay=null;this.mediaGeneration++;this.videoTrack?.stop();this.videoTrack=null;this.videoSender?.replaceTrack(null).catch(()=>{});}
     endVideo(message){
+      this.targetOverlay=null;
+      this.localYolo.close();
       this.search.pause();
       if(this.sceneCommit){this.localSpeechToken=null;this.visualPending=false;this.suppressResponse=true;this.control({type:'response.cancel'});this.emit({type:'app.scene_cancel'});}
       dialogue.saving=null;this.sceneTask=null;
@@ -504,6 +553,7 @@ export function createRuntime(env){
     stopPlayback(){this.audio.muted=true;}
     updatePlayback(){this.audio.muted=this.paused||this.visualPending||this.awaitingTranscript||!!document.getElementById('screen-reader-mode')?.checked;}
     close(){
+      this.localYolo.close();
       if(this.closed)return;this.search.stop();dialogue.saving=null;this.closed=true;this.localSpeechToken=null;this.readyState=3;this.requestController.abort();clearTimeout(this.sessionTimer);clearTimeout(this.videoTimer);clearTimeout(this.photoTimer);clearTimeout(this.sceneInstructionTimer);this.sceneCommit?.controller?.abort();this.sceneCommit=null;this.pendingInstructions=false;this.scene.stop();this.queuedReply=null;this.observationCall=null;this.clearVideoTrack();
       for(const c of this.channels){try{c.close();}catch{}}
       this.pc?.close();this.audio.pause();this.audio.srcObject=null;this.audio.hidden=true;
@@ -511,7 +561,11 @@ export function createRuntime(env){
       queueMicrotask(()=>this.onclose?.());
     }
   }
-  return {loaded:loadAccess(),Bridge,memory,taskState:()=>({...dialogue.summary(),search:activeBridge?.search.snapshot()||null}),place:()=>context.place,setPlace,status:()=>({token:'browser-local',configured:!!settings.configured&&!!settings.authenticated,fixedKey:true,serverConfigured:!!settings.configured,workspace:'',region:'beijing',place:context.place}),
+  return {loaded:loadAccess(),Bridge,memory,targetOverlayState:()=>{
+    const bridge=activeBridge,snapshot=bridge?.targetOverlay;let record;
+    try{if(snapshot){const matches=memory.find(snapshot.record.name);if(matches.length===1)record=matches[0];}}catch{}
+    return overlayCurrent(snapshot,{target:dialogue.target,record,active:!!bridge?.videoId&&!bridge.closed&&!bridge.paused&&!document.hidden})?snapshot:null;
+  },perceptionState:()=>activeBridge?.lastLocalPerception||null,taskState:()=>({...dialogue.summary(),search:activeBridge?.search.snapshot()||null}),place:()=>context.place,setPlace,status:()=>({token:'browser-local',configured:!!settings.configured&&!!settings.authenticated,fixedKey:true,serverConfigured:!!settings.configured,workspace:'',region:'beijing',place:context.place}),
     async api(path,body,method='POST'){
       if(path==='/api/config'){
         const response=await fetcher('/api/access',{cache:'no-store'});

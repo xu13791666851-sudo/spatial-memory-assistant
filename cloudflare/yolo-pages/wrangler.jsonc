@@ -1,0 +1,7 @@
+{
+ "$schema":"../../node_modules/wrangler/config-schema.json",
+ "name":"i-see-you-yolo-preview",
+ "pages_build_output_dir":"../../.pages-entry",
+ "compatibility_date":"2026-10-20",
+ "services":[{"binding":"MEMORY_API","service":"i-see-you-yolo-preview"}]
+}

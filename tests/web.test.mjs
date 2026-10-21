@@ -1152,3 +1152,54 @@ test('ambiguous unnamed objects require selection, invalid identification never 
  const evidence={...base,memory_candidate:{...candidate,name:'黄色拉链袋',selection_basis:'user_description'}};assert.equal(d.complete(plan.task,evidence).saved,true);assert.equal(m.get('黄色拉链袋').location,candidate.location);
  const before=JSON.stringify(m.rows());plan=d.intent('记住这个物品','home');d.intent('取消','home');d.complete(plan.task,evidence);assert.equal(JSON.stringify(m.rows()),before);
 });
+
+test('hybrid search requires cloud appearance confirmation and sends the final locally checked frame without changing memories',async t=>{
+ const clock=searchClock(),requests=[];let visible=false,localCalls=0;
+ const f=visualFixture({searchClock:clock,localYoloFactory:()=>({enabled:true,warm:async()=>true,close(){this.closed=true;},prepare:async()=>{localCalls++;return {image:'/9j/current-final-local-frame',stableCandidate:true,local:{status:'stable'}};}}),fetch:async(url,opts)=>{
+  if(url==='/api/vision'){requests.push(JSON.parse(opts.body));return Response.json(visible?{...seenCup,appearance_match:{status:'match',unique:true,reason:'蓝色杯身一致'}}:missingCup);}
+  return Response.json({configured:true,authenticated:true});
+ }});t.after(()=>f.bridge.close());f.runtime.setPlace('home');f.runtime.memory.saveVisual('蓝色杯子',{...candidate,appearance:'蓝色杯身'});const before=f.data.getItem('spatial-memory.records.v1');
+ say(f.bridge,'帮我找蓝色杯子');await clock.advance(1000);await finishPicture(f.bridge);assert.equal(f.bridge.search.state,'searching');assert.equal(requests.length,1);
+ visible=true;await clock.advance(8000);await finishPicture(f.bridge);assert.equal(f.bridge.search.state,'confirming');await clock.advance(8000);await finishPicture(f.bridge);assert.equal(f.bridge.search.state,'found');assert.equal(requests.length,3);assert.equal(localCalls,3);assert.equal(requests.at(-1).image,'/9j/current-final-local-frame');assert.match(lastAnswer(f.events),/找到了蓝色杯子/);assert.equal(f.data.getItem('spatial-memory.records.v1'),before);assert.equal(f.runtime.perceptionState().status,'stable');
+});
+
+test('cancelling during local inference prevents cloud submission and late memory changes',async t=>{
+ const clock=searchClock();let release,cloudCalls=0;
+ const f=visualFixture({searchClock:clock,localYoloFactory:()=>({enabled:true,warm:async()=>true,close(){this.closed=true;},prepare:()=>new Promise(resolve=>{release=resolve;})}),fetch:async(url)=>{if(url==='/api/vision')cloudCalls++;return Response.json({configured:true,authenticated:true});}});t.after(()=>f.bridge.close());
+ say(f.bridge,'帮我找水杯');await clock.advance(1000);await finishPicture(f.bridge);assert.equal(typeof release,'function');say(f.bridge,'取消');release({image:'/9j/stale-local-frame',stableCandidate:true,local:{status:'stable'}});await settle();
+ assert.equal(cloudCalls,0);assert.equal(f.bridge.search.state,'idle');assert.equal(f.runtime.memory.all().length,0);
+});
+
+test('saved green cup retry reads the actual record even after scene switch, and close-up preserves its appearance',async t=>{
+ const clock=searchClock(),requests=[];
+ const f=visualFixture({searchClock:clock,fetch:async(url,opts)=>{if(url==='/api/vision'){requests.push(JSON.parse(opts.body));return Response.json({...seenCup,appearance_match:{status:'match',unique:true,reason:'绿色杯身一致'}});}return Response.json({configured:true,authenticated:true});}});t.after(()=>f.bridge.close());
+ f.runtime.setPlace('home');f.runtime.memory.saveVisual('绿色水杯',{...candidate,appearance:'绿色杯身，有把手'});const before=f.data.getItem('spatial-memory.records.v1');f.runtime.setPlace('explore');
+ say(f.bridge,'重新帮我找绿色水杯');assert.equal(f.bridge.search.state,'searching');assert.match(lastAnswer(f.events),/已读到“绿色水杯”的本机记录/);
+ await clock.advance(1000);await finishPicture(f.bridge);assert.equal(requests[0].task.target,'绿色水杯');assert.equal(requests[0].task.reference_appearance,'绿色杯身，有把手');
+ say(f.bridge,'我已经把镜头对准绿色水杯了');await finishPicture(f.bridge);assert.equal(requests.at(-1).task.target,'绿色水杯');assert.equal(requests.at(-1).task.reference_appearance,'绿色杯身，有把手');assert.equal(f.data.getItem('spatial-memory.records.v1'),before);
+});
+
+test('hybrid full-frame miss is checked in a same-frame crop and still needs a second fresh view before found',async t=>{
+ const clock=searchClock(),requests=[];let pictures=0;
+ const localCandidate={label:'cup',confidence:0.9,hits:2,box:[0.1,0.2,0.4,0.8]};
+ const f=visualFixture({imageFingerprint:async()=>({whole:[1,2,3],target:[1,2,3]}),searchClock:clock,localYoloFactory:()=>({enabled:true,warm:async()=>true,close(){this.closed=true;},prepare:async()=>({image:'/9j/view-'+(++pictures),stableCandidate:true,candidate:localCandidate,local:{status:'stable'}})}),cropCandidate:async image=>image+'-crop',fetch:async(url,opts)=>{
+  if(url==='/api/vision'){const body=JSON.parse(opts.body);requests.push(body);const crop=body.image.endsWith('-crop');return Response.json(crop?{...seenCup,appearance_match:{status:'match',unique:true,reason:'绿色杯身和把手吻合'}}:{...missingCup,appearance_match:{status:'uncertain',unique:false,reason:'整图未看清'}});}
+  return Response.json({configured:true,authenticated:true});
+ }});t.after(()=>f.bridge.close());f.runtime.setPlace('home');f.runtime.memory.saveVisual('绿色水杯',{...candidate,appearance:'绿色杯身，有把手'});const before=f.data.getItem('spatial-memory.records.v1');
+ say(f.bridge,'重新帮我找绿色水杯');await clock.advance(1000);await finishPicture(f.bridge);assert.equal(requests.length,2);assert.equal(f.bridge.search.state,'confirming');
+ await clock.advance(14000);await finishPicture(f.bridge);assert.equal(requests.length,4);assert.equal(f.bridge.search.state,'found');assert.equal(pictures,2);assert.match(lastAnswer(f.events),/绿色水杯.*画面左侧/);assert.ok(requests.every(body=>body.task.reference_appearance==='绿色杯身，有把手'&&body.task.remember===false));assert.equal(f.runtime.perceptionState().status,'confirmed');assert.equal(f.data.getItem('spatial-memory.records.v1'),before);
+ assert.equal(f.runtime.targetOverlayState().status,'confirmed');assert.equal(f.runtime.targetOverlayState().record.name,'绿色水杯');
+ const record=f.runtime.memory.get('绿色水杯');f.runtime.memory.edit({...record,appearance:'绿色杯身，杯盖已取下',location:record.location});assert.equal(f.runtime.targetOverlayState(),null);
+ f.bridge.send(JSON.stringify({type:'pause'}));assert.equal(f.bridge.targetOverlay,null);
+});
+
+
+test('crop network failure keeps two fresh whole-frame matches but never confirms the candidate box',async t=>{
+ const clock=searchClock();let captures=0;
+ const f=visualFixture({searchClock:clock,imageFingerprint:async()=>({whole:[1,2,3],target:[1,2,3]}),localYoloFactory:()=>({enabled:true,warm:async()=>true,close(){this.closed=true;},prepare:async()=>({image:'/9j/view-'+(++captures),stableCandidate:true,candidate:{label:'cup',confidence:0.9,hits:2,box:[0.1,0.2,0.4,0.8]},local:{status:'stable'}})}),cropCandidate:async image=>image+'-crop',fetch:async(url,opts)=>{
+  if(url==='/api/vision'){const body=JSON.parse(opts.body);return body.image.endsWith('-crop')?Response.json({detail:'temporary timeout'},{status:502}):Response.json({...seenCup,appearance_match:{status:'match',unique:true,reason:'绿色杯身与把手相符'}});}
+  return Response.json({configured:true,authenticated:true});
+ }});t.after(()=>f.bridge.close());f.runtime.setPlace('home');f.runtime.memory.saveVisual('绿色水杯',{...candidate,appearance:'绿色杯身，有把手'});
+ say(f.bridge,'重新帮我找绿色水杯');await clock.advance(1000);await finishPicture(f.bridge);assert.equal(f.bridge.search.state,'confirming');assert.equal(f.runtime.targetOverlayState().status,'pending');
+ await clock.advance(14000);await finishPicture(f.bridge);assert.equal(f.bridge.search.state,'found');assert.equal(captures,2);assert.equal(f.runtime.targetOverlayState(),null);assert.equal(f.runtime.perceptionState().status,'verification_unavailable');
+});

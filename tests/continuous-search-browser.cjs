@@ -40,7 +40,11 @@ await page.getByRole('button',{name:'开始',exact:true}).click();await page.wai
 await page.waitForFunction(()=>document.querySelector('#chat').textContent.includes('你好，我是小忆'));
 const before=await page.evaluate(()=>localStorage.getItem('spatial-memory.records.v1'));
 await page.evaluate(()=>window.searchTest.sendText('绿色水杯上次放在哪里'));assert.equal(vision,0);assert.match(await page.locator('#latest-answer').innerText(),/木桌上/);
-await page.evaluate(()=>window.searchTest.sendText('帮我找绿色水杯'));
+await page.evaluate(()=>window.searchTest.sendText('重新帮我找绿色水杯'));
+assert.match(await page.locator('#latest-answer').innerText(),/已读到“绿色水杯”的本机记录/);
+await page.evaluate(()=>{window.originalPerception=window.searchTest.runtime.perceptionState;window.searchTest.runtime.perceptionState=()=>({status:'loading'});window.searchTest.bridge().search.publish();});
+assert.match(await page.locator('#search-status').innerText(),/YOLO 正在加载/);
+await page.evaluate(()=>{window.searchTest.runtime.perceptionState=window.originalPerception;window.searchTest.bridge().search.publish();});
 await page.waitForFunction(()=>!document.getElementById('search-controls').hidden,{},{timeout:5000});
 await page.waitForFunction(()=>window.searchTest.runtime.taskState().search.state==='confirming',{},{timeout:30000});
 assert.equal(vision,2);assert.match(await page.locator('#search-status').innerText(),/保持镜头稳定/);
