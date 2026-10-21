@@ -2,7 +2,7 @@
 
 **看见日常，也看见你。**
 
-本分支为 **YOLO + 千问识别实验**，基于队友已合并的主分支保留原界面。新增本地稳定候选筛选及千问确认，正式站保持原样。[打开测试站](https://i-see-you-yolo-preview.pages.dev/video/) · [识别流程与验证说明](docs/yolo-qwen-preview.md)。此分支的部署配置专门指向测试站，暂不合并主分支。
+主分支现包含手机摄像头[完整网页演示](docs/hackathon-web-demo.md)和[安卓原生测试版](android/README.md)的源码，保留原有像素界面；网页与安卓使用同一份原始 YOLO 模型。网页演示需要支持 Python 的运行环境，不能把主站基础网页当作完整演示。安卓真机麦克风与实体 ESP32 尚未验收。原 Cloudflare 正式站和 [YOLO 测试站](https://i-see-you-yolo-preview.pages.dev/video/)使用独立发布配置。
 
 面向视障用户的空间记忆助手，探索如何把画面、声音与记忆连接起来，让身边的信息更容易获取，让寻找有线索可循。
 

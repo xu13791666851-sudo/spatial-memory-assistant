@@ -1,8 +1,6 @@
 import fs from 'node:fs/promises';
-await import('./build-android-assets.mjs');
+await import('./build-demo-ui.mjs');
 const target='.demo-site';
-await fs.mkdir(target,{recursive:true});
-await fs.cp('android/app/src/main/assets/site',target,{recursive:true});
 for(const name of ['demo-bridge.mjs','demo-home.mjs','demo-mic.js'])await fs.copyFile('web/'+name,target+'/static/'+name);
 let html=await fs.readFile(target+'/index.html','utf8');
 html=html.replace('/static/android-home.mjs','/static/demo-home.mjs').replace('</head>','<link rel="stylesheet" href="/static/demo.css"></head>');
