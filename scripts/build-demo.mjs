@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 await import('./build-demo-ui.mjs');
 const target='.demo-site';
-for(const name of ['demo-bridge.mjs','demo-home.mjs','demo-mic.js'])await fs.copyFile('web/'+name,target+'/static/'+name);
+for(const name of ['demo-bridge.mjs','demo-home.mjs','demo-boxes.mjs','demo-mic.js'])await fs.copyFile('web/'+name,target+'/static/'+name);
 let html=await fs.readFile(target+'/index.html','utf8');
 html=html.replace('/static/android-home.mjs','/static/demo-home.mjs').replace('</head>','<link rel="stylesheet" href="/static/demo.css"></head>');
 html=html.replaceAll('安卓测试版使用本机 YOLO、三次外观样本记忆、千问语音与图片复核；硬件需要同一局域网。','网页演示使用手机摄像头，由后台运行 YOLO、保存三个外观样本并由千问复核；硬件另行演示。').replaceAll('离开应用会停止识别和录音。','离开页面会停止摄像头和录音。').replaceAll('安卓麦克风','手机麦克风').replaceAll('安装包不含长期密钥','网页不含长期密钥');
@@ -12,5 +12,5 @@ adapter=adapter.replace("if(data.role==='user'){conversation.add(data.text,true)
 adapter=adapter.replace("await call('text',{text});conversation.add(text,true);", "conversation.add(text,true);await call('text',{text});");
 adapter=adapter.replace("const action=interfaceCommand(text);if(action){", "if(/^(关闭摄像头|停止观察|停止视频)[。！？!?]*$/.test(text)){conversation.add(text,true);return perform('stop');}const action=interfaceCommand(text);if(action?.type==='cancel-confirmation'){conversation.add(text,true);await call('cancel');return true;}if(action){");
 await fs.writeFile(target+'/static/android-home.mjs',adapter);
-await fs.writeFile(target+'/static/demo.css',`#preview{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}#native-preview{display:none!important}.demo-standalone{padding:12px;margin:0;font-size:16px}.demo-standalone a{color:#17448c}`);
+await fs.writeFile(target+'/static/demo.css',`#preview{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}#native-preview{display:none!important}.demo-standalone{padding:12px;margin:0;font-size:16px}.demo-standalone a{color:#17448c}.demo-detection-layer{position:absolute;inset:0;z-index:2;pointer-events:none;overflow:hidden}.demo-detection-box{position:absolute;box-sizing:border-box;border:2px solid #67e8f9;box-shadow:0 0 0 1px #0c1c50aa;min-width:1px;min-height:1px}.demo-detection-label{position:absolute;top:0;left:0;transform:translateY(-100%);padding:2px 4px;background:#0c1c50e6;color:white;font-size:11px;font-weight:700;line-height:1.1;white-space:nowrap}.demo-detection-box[data-top-label=true] .demo-detection-label{transform:none}.memory-target-overlay{z-index:3!important}`);
 console.log('Web demonstration built: original pixel UI with actual browser media and server core.');
