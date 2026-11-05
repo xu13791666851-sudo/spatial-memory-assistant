@@ -1,3 +1,4 @@
+import {CandidateContinuity} from './tracking.mjs';
 import {PhoneLatest} from '../vendor/plan-b/g06-phone-source.mjs';
 import {check,text,uuid,hash,safeError} from './util.mjs';
 import {labelFor} from './memory.mjs';
@@ -14,10 +15,11 @@ export class Session {
   this.crop=crop??(async(frame,box)=>{const r=await pythonJson('../python/image.py',{jpeg:frame.jpeg.toString('base64'),box},{limit:4*1024*1024});return {...r,jpeg:Buffer.from(r.jpeg,'base64')};});
  }
  start(source='PHONE'){this.cancel(false);check(['PHONE','ESP32'].includes(source),'invalid_source');this.cameraSource=source;this.source.start();return {generation:this.source.generation};}
- stop(){this.cancel(false);this.source.stop();this.emit({type:'state',state:'IDLE',message:'观察已结束'});}
+ stop(){this.providers.reset?.();this.cancel(false);this.source.stop();this.emit({type:'state',state:'IDLE',message:'观察已结束'});}
  bindConversation(conversationId) {
   check(typeof conversationId === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(conversationId), 'invalid_conversation');
   if(this.conversationId === conversationId) return;
+  this.providers.reset?.();
   this.serial++;
   this.cancel(false);
   this.source.stop();
@@ -37,7 +39,7 @@ export class Session {
  say(message,serial=this.serial){if(serial!==this.serial)return;this.lastReplySerial=serial;this.emit({type:'reply',eventId:uuid(),serial,message:text(message,2000,false),objectId:this.focus?.id??null});}
  update(message=''){this.emit({type:'state',state:this.state,target:this.task?.target??null,objectId:this.focus?.id??null,message});}
  changed(){this.backup?.schedule();this.emit({type:'memory.changed'});}
- cancel(reply=true){this.generation++;for(const controller of this.active)controller.abort();this.active.clear();this.task=null;this.choices=null;this.reviewing=false;this.state='IDLE';this.lastConfirmed=null;this.update();if(reply)this.say('已取消当前任务，已经保存的画面仍保留。');}
+ cancel(reply=true){this.generation++;for(const controller of this.active)controller.abort();this.active.clear();this.task=null;this.choices=null;this.reviewing=false;this.state='IDLE';this.lastConfirmed=null;this.reviewTrack=null;this.update();if(reply)this.say('已取消当前任务，已经保存的画面仍保留。');}
  async command(command){
   const commandId=text(command.commandId,160,false);if(this.commands.has(commandId))return this.commands.get(commandId);
   const run=this.execute(command);this.commands.set(commandId,run);while(this.commands.size>128)this.commands.delete(this.commands.keys().next().value);return run;
@@ -87,6 +89,7 @@ export class Session {
    else if(!intent.newIdentity){object=this.resolve(intent,snapshot);if(object===undefined)return;}
    const prior=this.memory.all().find(o=>o.captures.some(c=>c.id===commandId));if(prior){this.focus=prior;this.say(this.memory.receipt(prior.id).message,serial);return;}
    this.cancel(false);const receipt=this.memory.capture(target,snapshot,{objectId:object?.id,captureId:commandId});this.focus=this.memory.get(receipt.objectId);this.state='LEARNING';this.changed();this.update('正在记住'+target+'的样子和位置');
+   if(this.providers.singlePassMemory)return this.rememberObservation(receipt,snapshot,intent,serial);
    const controller=new AbortController();this.active.add(controller);let saved=null,announced=false;
    try{
     // Both helpers see the command's frozen frame. Never substitute a later detection.
@@ -141,6 +144,30 @@ export class Session {
   }
   this.say('请再明确一下要进行的操作。',serial);
  }
+ async rememberObservation(receipt,snapshot,intent,serial) {
+  const controller=new AbortController();this.active.add(controller);
+  const started=performance.now();
+  try {
+   const d=await this.providers.describe(snapshot,intent.target,'描述并定位用户要记住的物品，说明其可见相对位置',controller.signal);
+   if(controller.signal.aborted)return;
+   let appearance=null;
+   if(d.v&&validBox(d.b))try{appearance=await this.crop(snapshot,d.b);}catch(error){this.emit({type:'diagnostic',operation:'memory_crop',code:safeError(error)});}
+   if(controller.signal.aborted)return;
+   // A single Omni observation is not an independent verification. Keep existing
+   // v2 provenance semantics so old tablets and backups can read these records.
+   let result=this.memory.finish(receipt,{appearance,description:d.v?d.d:null,suggestedLocation:d.v?d.l:null,failureKind:d.v?'REVIEW_UNCERTAIN':'TARGET_UNCERTAIN'});
+   if(intent.location){this.memory.addLocation(result.objectId,intent.location);result=this.memory.receipt(result.objectId);}
+   this.changed();
+   if(serial===this.serial){this.focus=this.memory.get(result.objectId);this.state='IDLE';this.update();this.say(result.message,serial);}
+   return result;
+  } catch(error) {
+   if(!controller.signal.aborted){
+    try{this.memory.finish(receipt,{failureKind:'ANALYSIS_FAILED'});this.changed();}catch{}
+    this.emit({type:'diagnostic',operation:'omni_memory',code:safeError(error)});
+    if(serial===this.serial){this.state='IDLE';this.update();this.say('当时画面已保存，但这次分析没有完成，外观和位置还未确认。',serial);}
+   }
+  } finally {this.active.delete(controller);this.emit({type:'diagnostic',operation:'omni_memory',frameId:snapshot.frameId,durationMs:Math.round(performance.now()-started)});}
+ }
  async tick(){
   if(this.state==='LEARNING')return;
   const frame=this.source.fresh();
@@ -148,7 +175,19 @@ export class Session {
   if(!frame||!this.detector?.ready||this.detector.busy)return;
   const key=`${frame.sourceGeneration}:${frame.frameId}`;if(key===this.lastFrameKey)return;this.lastFrameKey=key;const task=this.task;
   try{const result=await this.detector.run(frame,{target:task?.label,targets:task?.labels});if(frame.sourceGeneration!==this.source.generation)return;
+   this.reviewTrack?.update(frame,result,this.now());
    this.lastAnalyzed={...result,at:this.now()};this.emit({type:'detections',clientFrameId:frame.clientFrameId,frameId:frame.frameId,inferenceMs:result.inferenceMs,detections:result.detections});
+   if(this.state==='GUIDING'&&this.lastConfirmed&&this.providers.trackCandidates){
+    const old=this.lastConfirmed;
+    const found=result.detections.filter(d=>Number.isSafeInteger(old.trackId)&&d.trackId===old.trackId&&d.label===old.label&&overlap(d.box,old.box)>.35);
+    const current=found[0];
+    const ambiguous=current&&result.detections.some(d=>d!==current&&d.label===current.label&&overlap(d.box,current.box)>.25);
+    if(found.length===1&&!ambiguous&&this.now()-old.at<=1500){
+     const zone=b=>(b[0]+b[2])/2<1/3?'左侧':(b[0]+b[2])/2>2/3?'右侧':'中央';
+     if(zone(current.box)!==zone(old.box))this.say('目标现在在画面'+zone(current.box)+'。');
+     this.lastConfirmed={...old,box:current.box,at:this.now()};
+    }else{this.state='SEARCHING';this.lastConfirmed=null;this.emit({type:'speech.clear',serial:this.serial});this.update('目标跟踪中断，正在重新核对。');}
+   }
    if(this.state==='GUIDING'&&this.lastConfirmed&&!result.detections.some(d=>(task?.labels?.includes(d.label)||d.label===(this.lastConfirmed.label??task?.label))&&overlap(d.box,this.lastConfirmed.box)>.5)){this.state='SEARCHING';this.lastConfirmed=null;this.emit({type:'speech.clear',serial:this.serial});this.update('目标已离开刚才的位置，继续寻找。');}
    if(!task||this.task!==task||this.state==='GUIDING'||this.reviewing||this.now()-this.lastReview<3000)return;
    const object=task.objectId?this.memory.get(task.objectId):null;
@@ -162,13 +201,15 @@ export class Session {
  searchNotice(task,code,message){if(this.task!==task)return;task.notices??=new Set();if(task.notices.has(code))return;task.notices.add(code);this.say(message);}
  async verify(frame,candidate,task){
   const c=new AbortController();this.active.add(c);const serial=this.serial,generation=task.generation,started=performance.now();this.state='VERIFYING';this.update();
+  const track=this.providers.trackCandidates?new CandidateContinuity(candidate,frame,this.now()):null;this.reviewTrack=track;
   try{const object=task.objectId?this.memory.get(task.objectId):null;const refs=object?this.memory.references(object).map(path=>this.memory.image(path)):[];const r=await this.providers.review(frame,{target:task.target,description:object?.description??'',crop:candidate?Buffer.from(candidate.cropJpeg,'base64'):null,references:refs,features:task.features},c.signal);
    if(c.signal.aborted||this.task!==task||this.generation!==generation||serial!==this.serial)return;
-   const current=this.source.fresh();if(!current||current.sourceGeneration!==frame.sourceGeneration||this.now()-frame.receivedAtMs>3000){this.emit({type:'diagnostic',operation:'find_review',code:'review_frame_expired',frameId:frame.frameId,durationMs:Math.round(performance.now()-started)});this.searchNotice(task,'expired',r.decision==='CONFIRM'?'刚才的画面中看到了与参考相符的'+task.target+'，但结果返回时画面已过期，正在继续确认当前位置。':'这次对比返回时画面已过期，正在继续寻找'+task.target+'。');return;}
-   if(candidate&&(!this.lastAnalyzed||this.now()-this.lastAnalyzed.at>1500||!this.lastAnalyzed.detections.some(d=>(task.labels?.includes(d.label)||d.label===candidate.label)&&overlap(d.box,candidate.box)>.5))){this.emit({type:'diagnostic',operation:'find_review',code:'candidate_changed',frameId:frame.frameId});this.searchNotice(task,'candidate_changed','候选已离开刚才的位置，继续寻找'+task.target+'。');return;}
+   const current=this.source.fresh(),tracked=track?.current(this.now());if(!current||current.sourceGeneration!==frame.sourceGeneration||(this.now()-frame.receivedAtMs>3000&&!tracked)){this.emit({type:'diagnostic',operation:'find_review',code:'review_frame_expired',frameId:frame.frameId,durationMs:Math.round(performance.now()-started)});this.searchNotice(task,'expired',r.decision==='CONFIRM'?'刚才的画面中看到了与参考相符的'+task.target+'，但结果返回时画面已过期，正在继续确认当前位置。':'这次对比返回时画面已过期，正在继续寻找'+task.target+'。');return;}
+   if(candidate&&!tracked&&(!this.lastAnalyzed||this.now()-this.lastAnalyzed.at>1500||!this.lastAnalyzed.detections.some(d=>(task.labels?.includes(d.label)||d.label===candidate.label)&&overlap(d.box,candidate.box)>.5))){this.emit({type:'diagnostic',operation:'find_review',code:'candidate_changed',frameId:frame.frameId});this.searchNotice(task,'candidate_changed','候选已离开刚才的位置，继续寻找'+task.target+'。');return;}
+   if(track&&Number.isSafeInteger(track.id)&&!track.valid){this.searchNotice(task,'track_lost','目标跟踪中断，正在重新核对。');return;}
    if(r.decision==='REJECT'&&candidate){this.rejections.push({box:candidate.box,frameHash:hash(frame.jpeg),generation:frame.sourceGeneration,at:this.now()});this.searchNotice(task,'rejected','已排除一个不相符的候选，继续寻找'+task.target+'。');}
    if(r.decision==='UNCERTAIN')this.searchNotice(task,'uncertain','看到了相近的候选，但还不能确认是'+task.target+'。请保持镜头稳定或稍微靠近。');
-   if(r.decision==='CONFIRM'){this.lastConfirmed={box:candidate?.box??[0,0,1,1],label:candidate?.label??task.label,frameHash:hash(frame.jpeg),at:this.now()};this.state='GUIDING';const center=candidate?(candidate.box[0]+candidate.box[2])/2:null;this.say('发现'+(object?'与你保存的参考相符的':'一件')+task.target+(center===null?'。':center<1/3?'，在画面左侧。':center>2/3?'，在画面右侧。':'，在画面中央。'),serial);this.update();}
-  }catch(error){this.emit({type:'diagnostic',operation:'find_review',code:safeError(error),frameId:frame.frameId,durationMs:Math.round(performance.now()-started)});if(!c.signal.aborted&&serial===this.serial)this.searchNotice(task,'review_failed','这次物品对比未完成，仍在寻找'+task.target+'，已保存的照片和位置仍保留。');}finally{this.active.delete(c);if(this.task===task&&this.state==='VERIFYING'){this.state='SEARCHING';this.update();}}
+   if(r.decision==='CONFIRM'){this.lastConfirmed={box:tracked??candidate?.box??[0,0,1,1],trackId:candidate?.trackId??null,label:candidate?.label??task.label,frameHash:hash(frame.jpeg),at:this.now()};this.state='GUIDING';const currentBox=tracked??candidate?.box;const center=currentBox?(currentBox[0]+currentBox[2])/2:null;this.say('发现'+(object?'与你保存的参考相符的':'一件')+task.target+(center===null?'。':center<1/3?'，在画面左侧。':center>2/3?'，在画面右侧。':'，在画面中央。'),serial);this.update();}
+  }catch(error){this.emit({type:'diagnostic',operation:'find_review',code:safeError(error),frameId:frame.frameId,durationMs:Math.round(performance.now()-started)});if(!c.signal.aborted&&serial===this.serial)this.searchNotice(task,'review_failed','这次物品对比未完成，仍在寻找'+task.target+'，已保存的照片和位置仍保留。');}finally{if(this.reviewTrack===track)this.reviewTrack=null;this.active.delete(c);if(this.task===task&&this.state==='VERIFYING'){this.state='SEARCHING';this.update();}}
  }
 }

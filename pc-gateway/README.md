@@ -1,5 +1,17 @@
 # I SEE YOU 电脑处理中心
 
+## 0.17 当前默认：Omni Realtime
+
+语音继续使用安卓已有的 `qwen3.8-omni-flash-realtime`；电脑画面分析、物品比较和补充意图理解也统一使用该 **Realtime** 型号。默认路径不调用 Jev、VL 或 `qwen3.8-omni-flash` 非实时模型。旧 Jev 适配器只保留用于历史回归检查。
+
+电脑需设置 `DASHSCOPE_API_KEY`（也兼容 `QWEN_API_KEY`）。可复制 `.env.example` 为本机 `.env` 并填入，启动脚本只在当前进程读取；不要提交或发送 `.env`。默认官方 WebSocket 地址已经用本机账号验证；账号要求指定业务空间时，将 `ISEEYOU_OMNI_REALTIME_URL` 设为对应北京/新加坡 workspace 地址，程序固定模型参数为 realtime。
+
+从 0.16 更新时先备份，替换电脑服务源文件，保留原 `runtime/`、`models/`、`.env` 与 Python 环境；不要清空用户记忆。此改动不需要重新安装平板 APK。端口、配对和 v2 备份格式不变。新版 `/health` 显示版本 0.17.0 及 realtime 模型名。
+
+公开图片接口自检（会调用真实付费模型，不读取用户记忆）：`node --env-file-if-exists=.env scripts/omni-live-check.mjs`。本地检查：`npm test` 及 `python test/tracking_test.py`。实物流程见 [本轮验收说明](../docs/omni-realtime-0.17.md)。
+
+以下保留迁移背景与旧版演进记录，其中 Jev 的分工描述适用于 0.16 及之前。
+
 本目录以用户提供的方案 B 常驻 YOLO、最新帧入口和同帧裁剪为基础，接入现有安卓界面、受控记忆和原 Supabase 私有备份。安卓原有数据库保留；0.12 的任务与新记忆由电脑负责。
 
 ## Windows 运行

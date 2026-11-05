@@ -6,5 +6,5 @@ $env:ISEEYOU_PYTHON=(Resolve-Path -LiteralPath '.venv/Scripts/python.exe').Path
 $env:ISEEYOU_DEVICE=$Device
 $env:ISEEYOU_PORT=[string]$Port
 $env:PYTHONUTF8='1'
-& node src/server.mjs
+& node --env-file-if-exists=.env src/server.mjs
 if($LASTEXITCODE -ne 0){throw '电脑服务未正常启动，请查看上面的提示'}

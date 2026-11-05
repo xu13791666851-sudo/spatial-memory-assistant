@@ -5,6 +5,7 @@ import base64,io,json,sys,os,time,math,importlib.util,socket
 from pathlib import Path
 from contextlib import redirect_stdout
 from PIL import Image
+from tracking import ConservativeTracker
 import numpy as np
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('peer_yolo',ROOT/'vendor/plan-b/b-yolo.py')
@@ -31,6 +32,8 @@ def process(model,data,device):
         coords=[max(0,min(1,float(x))) for x in box.xyxyn[0].tolist()]
         if coords[0]<coords[2] and coords[1]<coords[3]:detections.append({'label':result.names[int(box.cls[0])],'score':float(box.conf[0]),'box':coords})
     detections.sort(key=lambda d:d['score'],reverse=True)
+    if not hasattr(model,'_isee_tracker'):model._isee_tracker=ConservativeTracker()
+    model._isee_tracker.update(detections,data.get('sourceGeneration'),time.monotonic())
     targets=data.get('targets') or [data.get('target')]
     candidates=[{**d,**crop(image,d['box'])} for d in detections if d['label'] in targets][:8]
     return {'frameId':data['frameId'],'sourceGeneration':data['sourceGeneration'],'detections':detections[:80],'candidates':candidates,'quality':peer.inspect_image(image),'inferenceMs':(time.perf_counter()-start)*1000}
