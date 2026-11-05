@@ -35,7 +35,7 @@ def process(model,data,device):
     if not hasattr(model,'_isee_tracker'):model._isee_tracker=ConservativeTracker()
     model._isee_tracker.update(detections,data.get('sourceGeneration'),time.monotonic())
     targets=data.get('targets') or [data.get('target')]
-    candidates=[{**d,**crop(image,d['box'])} for d in detections if d['label'] in targets][:8]
+    candidates=[{**d,**crop(image,d['box'])} for d in detections if not any(targets) or d['label'] in targets][:8]
     return {'frameId':data['frameId'],'sourceGeneration':data['sourceGeneration'],'detections':detections[:80],'candidates':candidates,'quality':peer.inspect_image(image),'inferenceMs':(time.perf_counter()-start)*1000}
 if __name__=='__main__':
     os.environ['YOLO_CONFIG_DIR']=str(ROOT/'runtime/yolo-settings')

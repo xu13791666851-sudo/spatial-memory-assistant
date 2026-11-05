@@ -15,11 +15,11 @@ export class Session {
   this.crop=crop??(async(frame,box)=>{const r=await pythonJson('../python/image.py',{jpeg:frame.jpeg.toString('base64'),box},{limit:4*1024*1024});return {...r,jpeg:Buffer.from(r.jpeg,'base64')};});
  }
  start(source='PHONE'){this.cancel(false);check(['PHONE','ESP32'].includes(source),'invalid_source');this.cameraSource=source;this.source.start();return {generation:this.source.generation};}
- stop(){this.providers.reset?.();this.cancel(false);this.source.stop();this.emit({type:'state',state:'IDLE',message:'观察已结束'});}
+ stop(){this.serial++;this.intentController?.abort();this.providers.reset?.();this.cancel(false);this.source.stop();this.emit({type:'state',state:'IDLE',message:'观察已结束'});}
  bindConversation(conversationId) {
   check(typeof conversationId === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(conversationId), 'invalid_conversation');
   if(this.conversationId === conversationId) return;
-  this.providers.reset?.();
+  this.intentController?.abort();this.providers.reset?.();
   this.serial++;
   this.cancel(false);
   this.source.stop();
@@ -36,10 +36,24 @@ export class Session {
  }
  frame(jpeg,generation,sequence,capturedAtMs,ageMs=0){check(Number.isSafeInteger(capturedAtMs)&&capturedAtMs>=0&&Number.isFinite(ageMs)&&ageMs>=0&&ageMs<2000,'stale_frame');const f=this.source.accept(jpeg,generation,sequence);f.capturedAtMs=Math.min(capturedAtMs,this.now());f.cameraSource=this.cameraSource;f.clientFrameId=sequence;f.receivedMs-=ageMs;f.receivedAtMs=this.now()-ageMs;return f;}
  frozen(){const f=this.source.fresh();check(f,'fresh_frame_required');return {...f,jpeg:Buffer.from(f.jpeg)};}
- say(message,serial=this.serial){if(serial!==this.serial)return;this.lastReplySerial=serial;this.emit({type:'reply',eventId:uuid(),serial,message:text(message,2000,false),objectId:this.focus?.id??null});}
+ clearAcknowledgement(){clearTimeout(this.ackTimer);this.ackTimer=null;}
+ acknowledge(message,serial=this.serial){
+  this.clearAcknowledgement();
+  this.ackTimer=setTimeout(()=>{if(serial===this.serial)this.say(message,serial,'ack');},120);
+  this.ackTimer.unref?.();
+ }
+ say(message,serial=this.serial,kind='result'){
+  if(serial!==this.serial)return;
+  if(kind!=='ack'){this.clearAcknowledgement();this.lastReplySerial=serial;}
+  this.emit({type:'reply',eventId:uuid(),serial,commandId:this.commandId,kind,message:text(message,2000,false),objectId:this.focus?.id??null});
+  if(this.turnStarted!=null&&!this.turnMetrics?.has(kind)){
+   this.turnMetrics??=new Set();this.turnMetrics.add(kind);
+   this.emit({type:'diagnostic',operation:kind==='ack'?'ack_ready':kind==='progress'?'progress_ready':'result_ready',serial,durationMs:Math.round(performance.now()-this.turnStarted)});
+  }
+ }
  update(message=''){this.emit({type:'state',state:this.state,target:this.task?.target??null,objectId:this.focus?.id??null,message});}
  changed(){this.backup?.schedule();this.emit({type:'memory.changed'});}
- cancel(reply=true){this.generation++;for(const controller of this.active)controller.abort();this.active.clear();this.task=null;this.choices=null;this.reviewing=false;this.state='IDLE';this.lastConfirmed=null;this.reviewTrack=null;this.update();if(reply)this.say('已取消当前任务，已经保存的画面仍保留。');}
+ cancel(reply=true){this.clearAcknowledgement();this.generation++;for(const controller of this.active)controller.abort();this.active.clear();this.task=null;this.choices=null;this.reviewing=false;this.state='IDLE';this.lastConfirmed=null;this.reviewTrack=null;this.update();if(reply)this.say('已取消当前任务，已经保存的画面仍保留。');}
  async command(command){
   const commandId=text(command.commandId,160,false);if(this.commands.has(commandId))return this.commands.get(commandId);
   const run=this.execute(command);this.commands.set(commandId,run);while(this.commands.size>128)this.commands.delete(this.commands.keys().next().value);return run;
@@ -47,14 +61,16 @@ export class Session {
  async execute(command){
   if(!command.action&&parseIntent(command.text??'',this.task?.target??this.focus?.name??this.lastTarget)?.action==='ignore')return;
   const serial=++this.serial,started=performance.now();
+  this.intentController?.abort();this.clearAcknowledgement();this.commandId=command.commandId;this.turnStarted=started;this.turnMetrics=new Set();
   try {
   if(this.state==='LEARNING'){this.state='IDLE';this.update();}
-  this.focus=this.focus?this.memory.get(this.focus.id):null;this.emit({type:'speech.clear',serial});const raw=text(command.text??'',600);let snapshot=null;try{snapshot=this.frozen();}catch{}
+  this.focus=this.focus?this.memory.get(this.focus.id):null;this.emit({type:'speech.clear',serial,commandId:this.commandId});const raw=text(command.text??'',600);let snapshot=null;try{snapshot=this.frozen();}catch{}
   let intent=command.action?{action:command.action,target:command.target,objectId:command.objectId,index:command.index}:parseIntent(raw,this.task?.target??this.focus?.name??this.lastTarget);
-  if(!intent&&this.providers.intent){try{intent=validateSemantic(await this.providers.intent(raw,this.task?.target??this.focus?.name??this.lastTarget,this.memory.all().map(o=>o.name).slice(0,40)),raw,this.focus?.name);}catch(error){this.emit({type:'diagnostic',operation:'intent',code:safeError(error)});}if(serial!==this.serial)return;}
+  if(!intent&&this.providers.intent){const c=new AbortController();this.intentController=c;try{intent=validateSemantic(await this.providers.intent(raw,this.task?.target??this.focus?.name??this.lastTarget,this.memory.all().map(o=>o.name).slice(0,40),c.signal),raw,this.focus?.name);}catch(error){this.emit({type:'diagnostic',operation:'intent',code:safeError(error)});}if(serial!==this.serial)return;}
   if(!intent){this.say(this.lastTarget||this.focus||this.task?'这次没能理解这句追问，正在谈的仍是'+(this.task?.target??this.focus?.name??this.lastTarget)+'。可以说“上次在哪里”或“现在帮我找”。':'你希望我帮你看什么，或者记住哪件物品？',serial);return;}
   if(intent.target&&['find','remember','history','check','appearance'].includes(intent.action))this.lastTarget=intent.target;
   if(intent.action==='ignore')return;
+  if(!['history','check','appearance','chat','clarify'].includes(intent.action)){for(const c of this.active)c.abort();this.active.clear();this.reviewing=false;}
   if(['chat','clarify'].includes(intent.action)){this.say(intent.answer,serial);return;}
   if(['find','remember','history','check','appearance'].includes(intent.action)&&!intent.target&&!intent.objectId){this.say('你说的是哪件物品？',serial);return;}
   if(intent.action==='select'){check(this.choices&&Number.isInteger(intent.index)&&this.choices.ids[intent.index],'invalid_choice');const choice=this.choices;this.choices=null;return await this.executeIntent({...choice.intent,objectId:choice.ids[intent.index]},choice.snapshot,serial,command.commandId);}
@@ -79,16 +95,16 @@ export class Session {
   if(action==='complete'){if(this.focus){this.memory.recordRetrieved(this.focus.id);this.changed();}this.cancel(false);this.state='COMPLETED';this.update();this.say(this.focus?'已记录你拿到了'+this.focus.name+'，之后放在哪里还没有记录。':'本次寻找已结束。');return;}
   if(action==='reject'||action==='continue'||action==='features'){
    if(!this.task){if(action==='continue'&&(this.focus||this.lastTarget))return this.executeIntent({action:'find',target:this.focus?.name??this.lastTarget,objectId:this.focus?.id},snapshot,serial,commandId);this.say('请先说要找哪件物品。');return;}if(action==='reject'&&this.lastConfirmed)this.rejections.push({box:this.lastConfirmed.box,frameHash:this.lastConfirmed.frameHash,generation:this.source.generation,at:this.now()});
-   const features=action==='features'?text(intent.description,120,false):this.task.features;this.generation++;this.task={...this.task,features,generation:this.generation};for(const c of this.active)c.abort();this.active.clear();this.reviewing=false;this.lastConfirmed=null;this.state='SEARCHING';this.lastReview=0;this.update();this.say(action==='reject'?'已排除刚才的候选，继续寻找。':action==='features'?'已补充本轮特征，继续寻找。':'继续寻找。');return;
+   const features=action==='features'?text(intent.description,120,false):this.task.features;this.generation++;this.task={...this.task,features,generation:this.generation,lastDetectionKey:null};for(const c of this.active)c.abort();this.active.clear();this.reviewing=false;this.lastConfirmed=null;this.state='SEARCHING';this.lastReview=0;this.update();this.task.serial=serial;this.acknowledge(action==='reject'?'好，我继续找。':'好，继续寻找。',serial);void this.tick();return;
   }
   if(action==='accept'){this.say('已收到你的确认，拿到后可以告诉我“拿到了”。');return;}
-  if(action==='describe'){check(snapshot,'fresh_frame_required');this.update('正在看眼前的画面');const c=new AbortController();this.active.add(c);try{const r=await this.providers.describe(snapshot,null,intent.question??'眼前有什么',c.signal);if(!c.signal.aborted)this.say(r.answer?.trim()||(r.i.length?'当前画面可以看到：'+r.i.join('、')+'。':'我还看不清，请把镜头稍微移近一些。'),serial);}finally{this.active.delete(c);}return;}
+  if(action==='describe'){check(snapshot,'fresh_frame_required');this.cancel(false);this.acknowledge('好，我看一下。',serial);this.update('正在看眼前的画面');const c=new AbortController();this.active.add(c);try{const r=await this.providers.describe(snapshot,null,intent.question??'眼前有什么',c.signal);if(!c.signal.aborted)this.say(r.answer?.trim()||(r.i.length?'当前画面可以看到：'+r.i.join('、')+'。':'我还看不清，请把镜头稍微移近一些。'),serial);}finally{this.active.delete(c);}return;}
   if(action==='remember'){
    check(snapshot,'fresh_frame_required');const target=text(intent.target,40,false);let object=null;
    if(intent.objectId){object=this.memory.get(intent.objectId);check(object,'object_missing');}
    else if(!intent.newIdentity){object=this.resolve(intent,snapshot);if(object===undefined)return;}
    const prior=this.memory.all().find(o=>o.captures.some(c=>c.id===commandId));if(prior){this.focus=prior;this.say(this.memory.receipt(prior.id).message,serial);return;}
-   this.cancel(false);const receipt=this.memory.capture(target,snapshot,{objectId:object?.id,captureId:commandId});this.focus=this.memory.get(receipt.objectId);this.state='LEARNING';this.changed();this.update('正在记住'+target+'的样子和位置');
+   this.cancel(false);const receipt=this.memory.capture(target,snapshot,{objectId:object?.id,captureId:commandId});this.focus=this.memory.get(receipt.objectId);this.state='LEARNING';this.changed();this.update('正在记住'+target+'的样子和位置');this.acknowledge('好，我正在记录。',serial);
    if(this.providers.singlePassMemory)return this.rememberObservation(receipt,snapshot,intent,serial);
    const controller=new AbortController();this.active.add(controller);let saved=null,announced=false;
    try{
@@ -140,7 +156,7 @@ export class Session {
    this.say(action==='check'?this.memory.receipt(object.id).message:action==='history'?this.memory.history(object.id):object.description?'已保存的外观描述是：'+object.description+'。':object.appearances.length?'已经保存了目标参考照片，尚无文字外观描述。':'还没有保存这件物品的目标外观照片。',serial);return;
   }
   if(action==='find'){
-   const target=text(intent.target,40,false);this.cancel(false);this.focus=object;this.rejections=[];this.lastReview=0;this.cloudRequests=0;this.lastTarget=target;this.lastFrameKey=null;this.task={id:uuid(),target,label:object?.yoloLabel??labelFor(object?.name??target),labels:detectionLabels(object?.name??target,object?.yoloLabel??labelFor(target)),objectId:object?.id??null,features:'',generation:this.generation,serial};this.state='SEARCHING';this.update();this.say('开始寻找'+target+'。'+(object&&!this.memory.references(object).length?'这件物品还没有目标参考画面，暂时不能确认是否是你的那一件。':''),serial);return;
+   const target=text(intent.target,40,false);this.cancel(false);this.focus=object;this.rejections=[];this.lastReview=0;this.cloudRequests=0;this.lastTarget=target;this.task={id:uuid(),target,label:object?.yoloLabel??labelFor(object?.name??target),labels:detectionLabels(object?.name??target,object?.yoloLabel??labelFor(target)),objectId:object?.id??null,features:'',generation:this.generation,serial};this.state='SEARCHING';this.update();if(object&&!this.memory.references(object).length)this.say('这件物品还没有目标参考画面，暂时不能确认是否是你的那一件。',serial);else this.acknowledge('好，我帮你找'+target+'。',serial);void this.tick();return;
   }
   this.say('请再明确一下要进行的操作。',serial);
  }
@@ -171,12 +187,17 @@ export class Session {
  async tick(){
   if(this.state==='LEARNING')return;
   const frame=this.source.fresh();
-  if(!frame&&this.state==='GUIDING'){this.emit({type:'speech.clear',serial:this.serial});this.state='SEARCHING';this.lastConfirmed=null;this.update('当前画面已过期，请调整镜头继续寻找。');}
+  if(!frame&&this.state==='GUIDING'){this.emit({type:'speech.clear',serial:this.serial,commandId:this.commandId});this.state='SEARCHING';this.lastConfirmed=null;this.update('当前画面已过期，请调整镜头继续寻找。');}
   if(!frame||!this.detector?.ready||this.detector.busy)return;
-  const key=`${frame.sourceGeneration}:${frame.frameId}`;if(key===this.lastFrameKey)return;this.lastFrameKey=key;const task=this.task;
-  try{const result=await this.detector.run(frame,{target:task?.label,targets:task?.labels});if(frame.sourceGeneration!==this.source.generation)return;
+  const key=`${frame.sourceGeneration}:${frame.frameId}`;
+  const cached=this.lastAnalyzed?.key===key?this.lastAnalyzed:null;
+  if(cached&&(!this.task||this.task.lastDetectionKey===key))return;
+  this.lastFrameKey=key;
+  try{const result=cached??await this.detector.run(frame,{target:this.task?.label,targets:this.task?.labels});if(frame.sourceGeneration!==this.source.generation)return;
+   const task=this.task;
+   if(task)task.lastDetectionKey=key;
    this.reviewTrack?.update(frame,result,this.now());
-   this.lastAnalyzed={...result,at:this.now()};this.emit({type:'detections',clientFrameId:frame.clientFrameId,frameId:frame.frameId,inferenceMs:result.inferenceMs,detections:result.detections});
+   this.lastAnalyzed={...result,key,at:cached?.at??this.now()};this.emit({type:'detections',clientFrameId:frame.clientFrameId,frameId:frame.frameId,inferenceMs:result.inferenceMs,detections:result.detections});
    if(this.state==='GUIDING'&&this.lastConfirmed&&this.providers.trackCandidates){
     const old=this.lastConfirmed;
     const found=result.detections.filter(d=>Number.isSafeInteger(old.trackId)&&d.trackId===old.trackId&&d.label===old.label&&overlap(d.box,old.box)>.35);
@@ -186,10 +207,10 @@ export class Session {
      const zone=b=>(b[0]+b[2])/2<1/3?'左侧':(b[0]+b[2])/2>2/3?'右侧':'中央';
      if(zone(current.box)!==zone(old.box))this.say('目标现在在画面'+zone(current.box)+'。');
      this.lastConfirmed={...old,box:current.box,at:this.now()};
-    }else{this.state='SEARCHING';this.lastConfirmed=null;this.emit({type:'speech.clear',serial:this.serial});this.update('目标跟踪中断，正在重新核对。');}
+    }else{this.state='SEARCHING';this.lastConfirmed=null;this.emit({type:'speech.clear',serial:this.serial,commandId:this.commandId});this.update('目标跟踪中断，正在重新核对。');}
    }
-   if(this.state==='GUIDING'&&this.lastConfirmed&&!result.detections.some(d=>(task?.labels?.includes(d.label)||d.label===(this.lastConfirmed.label??task?.label))&&overlap(d.box,this.lastConfirmed.box)>.5)){this.state='SEARCHING';this.lastConfirmed=null;this.emit({type:'speech.clear',serial:this.serial});this.update('目标已离开刚才的位置，继续寻找。');}
-   if(!task||this.task!==task||this.state==='GUIDING'||this.reviewing||this.now()-this.lastReview<3000)return;
+   if(this.state==='GUIDING'&&this.lastConfirmed&&!result.detections.some(d=>(task?.labels?.includes(d.label)||d.label===(this.lastConfirmed.label??task?.label))&&overlap(d.box,this.lastConfirmed.box)>.5)){this.state='SEARCHING';this.lastConfirmed=null;this.emit({type:'speech.clear',serial:this.serial,commandId:this.commandId});this.update('目标已离开刚才的位置，继续寻找。');}
+   if(!task||task.serial!==this.serial||this.task!==task||this.state==='GUIDING'||this.reviewing||this.now()-this.lastReview<3000)return;
    const object=task.objectId?this.memory.get(task.objectId):null;
    const candidates=rankCandidates((result.candidates??[]).filter(c=>(!task.labels?.length||task.labels.includes(c.label))&&validBox(c.box)&&!this.rejections.some(r=>r.generation===frame.sourceGeneration&&this.now()-r.at<30000&&overlap(r.box,c.box)>.65)),object?this.memory.photos(object):[]);
    const candidate=candidates[0]??null;if(!candidate&&task.label){this.searchNotice(task,'no_candidate','本地检测暂未圈出'+task.target+'，正在用当前画面和参考照片继续核对。');}if(!candidate&&this.now()-this.lastReview<6000)return;
@@ -198,7 +219,7 @@ export class Session {
    this.lastReview=this.now();this.reviewing=true;this.cloudRequests++;void this.verify(frame,candidate,task).finally(()=>{if(this.task===task)this.reviewing=false;});
   }catch(error){this.emit({type:'diagnostic',code:safeError(error)});}
  }
- searchNotice(task,code,message){if(this.task!==task)return;task.notices??=new Set();if(task.notices.has(code))return;task.notices.add(code);this.say(message);}
+ searchNotice(task,code,message){if(this.task!==task)return;task.notices??=new Set();if(task.notices.has(code))return;task.notices.add(code);this.say(message,this.serial,['no_candidate','expired','candidate_changed','track_lost','rejected'].includes(code)?'progress':'result');}
  async verify(frame,candidate,task){
   const c=new AbortController();this.active.add(c);const serial=this.serial,generation=task.generation,started=performance.now();this.state='VERIFYING';this.update();
   const track=this.providers.trackCandidates?new CandidateContinuity(candidate,frame,this.now()):null;this.reviewTrack=track;

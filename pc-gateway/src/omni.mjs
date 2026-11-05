@@ -12,9 +12,9 @@ export class OmniProviders {
   Object.assign(this,{client,intentClient,now,prepare,singlePassMemory:true,trackCandidates:true,failures:0,retryAt:0});
   this.intent=this.interpret.bind(this);
  }
- async interpret(raw,focus,names) {
+ async interpret(raw,focus,names,signal) {
   const prompt='你是找物助手的意图理解器。只返回JSON：{"action":"...","target":"物品名","answer":"普通问答或澄清，最多100字"}。action选find(现在找)、remember(记住)、history(上次位置)、check(是否记住)、appearance(已存外观)、describe(当前画面)、continue、cancel、complete、chat、clarify、ignore。指代用focus。你看不到相机、没有物品记录，禁止编造眼前内容、保存成功或物品位置；分流到相应action。数据：'+JSON.stringify({raw,focus,names:names.slice(0,40)});
-  const parsed=validateSemantic(json(await this.intentClient.request(prompt,null)),raw,focus);
+  const parsed=validateSemantic(json(await this.intentClient.request(prompt,null,signal)),raw,focus);
   // Non-chat answers are discarded; only the selected application operation may speak.
   if(parsed&&!['chat','clarify'].includes(parsed.action))delete parsed.answer;
   return parsed;

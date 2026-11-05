@@ -37,8 +37,8 @@ test('one Omni observation saves real records and never calls an independent rev
  const s=new Session({memory:m,providers:{singlePassMemory:true,describe:async()=>{calls++;return {v:true,d:'蓝色杯子',l:'键盘右侧',b:[.3,.2,.6,.8]};},review:()=>{throw Error('must_not_wait');}},emit:e=>events.push(e)});
  s.start();s.frame(picture,s.source.generation,1,Date.now());await s.command({commandId:uuid(),text:'记住这个杯子'});
  const o=m.all()[0];assert.equal(calls,1);assert.equal(o.appearances.length,1);assert.equal(o.locations.length,0);
- assert.equal(m.locationHistory(o.id)[0].source,'CAMERA_OBSERVED');assert.equal(events.filter(e=>e.type==='reply').length,1);
- assert.match(events.filter(e=>e.type==='reply')[0].message,/已记录.*位置尚待核对/);
+ assert.equal(m.locationHistory(o.id)[0].source,'CAMERA_OBSERVED');assert.equal(events.filter(e=>e.type==='reply'&&e.kind!=='ack').length,1);
+ assert.match(events.filter(e=>e.type==='reply'&&e.kind!=='ack')[0].message,/已记录.*位置尚待核对/);
  await s.command({commandId:uuid(),text:'杯子上次在哪'});assert.equal(calls,1);assert.match(events.filter(e=>e.type==='reply').at(-1).message,/键盘右侧/);
 });
 test('cancelled Omni memory keeps the captured scene but cannot append a late observation',async t=>{
