@@ -7,7 +7,7 @@ import {randomBytes,timingSafeEqual} from 'node:crypto';
 import {existsSync,readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {WebSocketServer} from 'ws';
 import {Memory} from './memory.mjs';
-import {Providers} from './providers.mjs';
+import {OmniProviders} from './omni.mjs';
 import {SupabaseMemory} from './supabase.mjs';
 import {Session} from './session.mjs';
 import {Yolo} from './yolo.mjs';
@@ -18,15 +18,15 @@ export const isLan=ip=>ip==='127.0.0.1'||ip==='::1'||/^(10\.|192\.168\.|172\.(1[
 export async function createGateway({root=resolve(dirname(fileURLToPath(import.meta.url)),'../runtime'),port=8765,host='0.0.0.0',detector=null,providers=null,backupOptions={},python=process.env.ISEEYOU_PYTHON||'python'}={}){
  mkdirSync(root,{recursive:true});const addresses=['127.0.0.1',...Object.values(networkInterfaces()).flat().filter(i=>i.family==='IPv4'&&!i.internal&&isLan(i.address)).map(i=>i.address)];
  const tls=await pythonJson('../python/tls.py',{directory:root,addresses},{python,limit:2000});const tokenFile=resolve(root,'pair-token');if(!existsSync(tokenFile))writeFileSync(tokenFile,randomBytes(32).toString('base64url'),{flag:'wx',mode:0o600});const token=readFileSync(tokenFile,'utf8').trim();check(/^[A-Za-z0-9_-]{43}$/.test(token),'pair_token_invalid');
- const memory=new Memory(resolve(root,'memory'));let socket=null,providerKey=null,rpc=new Map();const send=message=>{if(socket?.readyState===1)socket.send(JSON.stringify(message));};
+ const memory=new Memory(resolve(root,'memory'));let socket=null,rpc=new Map();const send=message=>{if(socket?.readyState===1)socket.send(JSON.stringify(message));};
  const backup=new SupabaseMemory(memory,{...backupOptions,sessionChanged:async value=>{await clientRequest('session.updated',value);}});
  const clientRequest=(operation,data)=>new Promise((resolve,reject)=>{if(socket?.readyState!==1){reject(Error('phone_not_connected'));return;}const requestId=uuid(),timer=setTimeout(()=>{rpc.delete(requestId);reject(Error('client_response_timeout'));},operation==='intent'?3500:15000);rpc.set(requestId,{resolve,reject,timer});send({type:'client.request',requestId,operation,data});});
- const models=providers??new Providers({key:()=>providerKey||process.env.OPENROUTER_API_KEY});
+ const models=providers??new OmniProviders();
  const log=diagnosticLog(root);const yolo=detector??new Yolo({python});const session=new Session({memory,backup,providers:models,detector:yolo,emit:event=>{log(event);send(event);}});
  const json=(res,code,data)=>{res.writeHead(code,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}).end(JSON.stringify(data));};
  const authorized=req=>{const peer=req.socket.remoteAddress?.replace(/^::ffff:/,'');if(!isLan(peer))return false;const got=Buffer.from((req.headers.authorization||'').replace(/^Bearer /,'')),expected=Buffer.from(token);return got.length===expected.length&&timingSafeEqual(got,expected);};
  const server=https.createServer({key:readFileSync(resolve(root,'server-key.pem')),cert:readFileSync(resolve(root,'server-cert.pem')),minVersion:'TLSv1.2'},async(req,res)=>{
-  if(req.method==='GET'&&req.url==='/health'){json(res,200,{app:'I SEE YOU PC',version:'0.16.0',yoloReady:yolo.ready});return;}
+  if(req.method==='GET'&&req.url==='/health'){json(res,200,{app:'I SEE YOU PC',version:'0.17.0',visionProvider:'omni',visionModel:'qwen3.8-omni-flash-realtime',yoloReady:yolo.ready});return;}
   if(!authorized(req)){json(res,401,{code:'pair_required'});return;}
   try{
    if(req.method==='POST'&&req.url==='/v1/import'){
@@ -51,14 +51,14 @@ export async function createGateway({root=resolve(dirname(fileURLToPath(import.m
     if(m.type==='client.result'){const pending=rpc.get(m.requestId);if(pending){clearTimeout(pending.timer);rpc.delete(m.requestId);if(m.error)pending.reject(Error('client_operation_failed'));else pending.resolve(m.result);}return;}
     let result;
     if(m.type==='hello'){
-     check(!initialized,'already_initialized');if(m.session)backup.setSession(m.session);if(m.openrouterKey){check(/^sk-or-v1-[A-Za-z0-9_-]{30,200}$/.test(m.openrouterKey),'jev_key_invalid');providerKey=m.openrouterKey;}
+     check(!initialized,'already_initialized');if(m.session)backup.setSession(m.session);// Older tablets may send openrouterKey; it is deliberately ignored.
      // On a fresh PC, load the cloud snapshot BEFORE importing the old tablet copy.
      // A failed initial restore cannot publish an incomplete replacement snapshot.
      if(m.session&&!memory.db.prepare("SELECT value FROM meta WHERE key='cloud-bootstrap'").get()){
       await backup.restore();memory.db.prepare("INSERT INTO meta VALUES('cloud-bootstrap',?)").run(m.session.userId);
      }
      if(m.conversationId)session.bindConversation(m.conversationId);
-     initialized=true;result={account:memory.account(),version:'0.16.0',conversationSessions:true,yoloReady:yolo.ready,imported:!!memory.db.prepare("SELECT value FROM meta WHERE key='android-import'").get()};
+     initialized=true;result={account:memory.account(),version:'0.17.0',visionProvider:'omni',visionModel:'qwen3.8-omni-flash-realtime',conversationSessions:true,yoloReady:yolo.ready,imported:!!memory.db.prepare("SELECT value FROM meta WHERE key='android-import'").get()};
     }else{check(initialized,'hello_required');
      if(m.type==='start')result=session.start(m.source);
      else if(m.type==='stop'){session.stop();result={ok:true};}
@@ -79,14 +79,15 @@ export async function createGateway({root=resolve(dirname(fileURLToPath(import.m
     if(ws.readyState===1)ws.send(JSON.stringify({type:'result',requestId:m.requestId,result:result??null}));
    }catch(error){if(ws.readyState===1)ws.send(JSON.stringify({type:'result',requestId:m?.requestId??'',error:safeError(error)}));}
   })();});
-  ws.on('error',()=>{});ws.on('close',()=>{if(socket!==ws)return;session.stop();socket=null;providerKey=null;backup.clear();for(const p of rpc.values()){clearTimeout(p.timer);p.reject(Error('phone_disconnected'));}rpc.clear();});
+  ws.on('error',()=>{});ws.on('close',()=>{if(socket!==ws)return;session.stop();socket=null;backup.clear();for(const p of rpc.values()){clearTimeout(p.timer);p.reject(Error('phone_disconnected'));}rpc.clear();});
  });
  const timer=setInterval(()=>{void session.tick();},150);timer.unref();const heartbeat=setInterval(()=>{if(socket){if(!socket.isAlive)socket.terminate();else{socket.isAlive=false;socket.ping();}}},10000);heartbeat.unref();
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,host,resolve);});const actualPort=server.address().port;
  const links=addresses.map(ip=>`iseeyou-pc://pair?host=${ip}&port=${actualPort}&fingerprint=${tls.fingerprint}&token=${token}`);writeFileSync(resolve(root,'pairing-links.txt'),links.join('\n'),{mode:0o600});
- return {server,memory,backup,session,yolo,links,token,fingerprint:tls.fingerprint,port:actualPort,async close(){clearInterval(timer);clearInterval(heartbeat);session.stop();backup.clear();for(const p of rpc.values()){clearTimeout(p.timer);p.reject(Error('gateway_closed'));}rpc.clear();socket?.terminate();await new Promise(resolve=>wss.close(resolve));await new Promise(resolve=>server.close(resolve));yolo.close();memory.close();}};
+ return {server,memory,backup,session,yolo,links,token,fingerprint:tls.fingerprint,port:actualPort,async close(){clearInterval(timer);clearInterval(heartbeat);session.stop();backup.clear();for(const p of rpc.values()){clearTimeout(p.timer);p.reject(Error('gateway_closed'));}rpc.clear();socket?.terminate();await new Promise(resolve=>wss.close(resolve));await new Promise(resolve=>server.close(resolve));models.close?.();yolo.close();memory.close();}};
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
+ if(!process.env.DASHSCOPE_API_KEY&&!process.env.QWEN_API_KEY)console.log('Omni Realtime 尚未配置：请在电脑环境或 pc-gateway/.env 设置 DASHSCOPE_API_KEY；已有记忆仍可读取。');
  const gateway=await createGateway({root:process.env.ISEEYOU_RUNTIME||undefined,port:Number(process.env.ISEEYOU_PORT||8765)});
  console.log('I SEE YOU 电脑处理中心已启动。配对地址保存在 runtime/pairing-links.txt（仅在本应用中导入）。');
  console.log('状态：https://127.0.0.1:'+gateway.port+'/health');gateway.yolo.started.then(()=>console.log('本地 YOLO 已就绪。')).catch(()=>console.log('YOLO 尚未启动，请检查 Python、模型和设备配置；已有记忆仍保留。'));

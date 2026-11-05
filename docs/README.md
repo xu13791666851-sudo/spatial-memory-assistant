@@ -4,6 +4,7 @@
 
 | 主题 | 文档 |
 | --- | --- |
+| 语音反馈与识图并行、更新与验收 | [并行反馈说明](parallel-feedback.md) |
 | 完整手机摄像头演示、运行与打包 | [完整演示](hackathon-web-demo.md) |
 | 安卓原生应用、YOLO、语音与 ESP32 | [安卓说明](../android/README.md) |
 | 已上线基础网页的发布 | [Cloudflare 部署](cloudflare-deployment.md) |

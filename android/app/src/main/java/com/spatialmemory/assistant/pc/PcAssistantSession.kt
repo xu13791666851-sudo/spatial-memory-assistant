@@ -56,6 +56,8 @@ class PcAssistantSession(
     private var serial=0L
     private var utteranceSerial=0L
     private var serverSerial=0L
+    private val feedback = PcTurnFeedback()
+    private var turnStartedMs=0L
     private val spoken=linkedSetOf<String>()
     private val dialogue=FindDialogueEngine()
 
@@ -121,13 +123,18 @@ class PcAssistantSession(
     private suspend fun receive(m: JSONObject) {
         when(m.optString("type")) {
             "result" -> pending[m.optString("requestId")]?.complete(m)
-            "speech.clear" -> { serverSerial=maxOf(serverSerial,m.optLong("serial"));speech.reset() }
+            "speech.clear" -> { if(!feedback.accepts(m.optString("commandId"))||m.optLong("serial")<serverSerial)return;serverSerial=maxOf(serverSerial,m.optLong("serial"));speech.reset() }
             "reply" -> {
                 val current=m.optLong("serial");val event=m.getString("eventId")
-                if(current<serverSerial||!spoken.add(event))return
+                if(!feedback.accepts(m.optString("commandId"))||current<serverSerial||!spoken.add(event))return
                 serverSerial=current;while(spoken.size>128)spoken.remove(spoken.first())
+                val kind=m.optString("kind","result")
+                if(!feedback.shouldSpeak(kind))return
                 val words=m.getString("message");mutableState.value=mutableState.value.copy(lastSpeech=words,message=words,rememberedObjectId=m.optString("objectId").takeUnless { it.isBlank()||it=="null" })
-                speech.announce(SpeechEvent("pc-$event",words,SpeechPriority.P1))
+                val started=turnStartedMs
+                speech.announce(SpeechEvent("pc-$event",words,if(kind=="ack") SpeechPriority.P1 else SpeechPriority.P0) {
+                    if(started>0)android.util.Log.i("PcTurnLatency", "$kind playback from transcript/command: ${android.os.SystemClock.elapsedRealtime()-started}ms")
+                })
             }
             "state" -> mutableState.value=mutableState.value.copy(searchState=runCatching { SearchState.valueOf(m.optString("state","IDLE")) }.getOrDefault(SearchState.IDLE),target=m.optString("target").takeUnless { it.isBlank()||it=="null" },rememberedObjectId=m.optString("objectId").takeUnless { it.isBlank()||it=="null" },message=m.optString("message"),objectChoices=emptyList())
             "choices" -> {
@@ -203,12 +210,17 @@ class PcAssistantSession(
         mutableState.value=AssistantState(message="新会话已开始")
     }
     suspend fun submitText(text: String) {
+        if(text.isBlank() || PcTurnFeedback.ignores(text))return
         val turn=++utteranceSerial
-        try { if(maintenance(text))return;connect();rpc("command",JSONObject().put("async",true).put("command",JSONObject().put("commandId",UUID.randomUUID().toString()).put("text",text))) }
+        val commandId=beginCommand()
+        try { if(maintenance(text))return;connect();if(turn!=utteranceSerial)return;rpc("command",JSONObject().put("async",true).put("command",JSONObject().put("commandId",commandId).put("text",text))) }
         catch(error: CancellationException) { throw error }
         catch(error: Exception) { if(turn==utteranceSerial)localReply(if(connected)"这次没有完成，请再试一次。" else "连接中断了，请稍后再试。") }
     }
-    private suspend fun command(action: String,target: String?=null,objectId: String?=null,index: Int?=null) { connect();rpc("command",JSONObject().put("async",true).put("command",JSONObject().put("commandId",UUID.randomUUID().toString()).put("action",action).put("target",target).put("objectId",objectId).apply { if(index!=null)put("index",index) })) }
+    private fun beginCommand(): String {
+        val id=UUID.randomUUID().toString();feedback.begin(id);turnStartedMs=android.os.SystemClock.elapsedRealtime();speech.reset();return id
+    }
+    private suspend fun command(action: String,target: String?=null,objectId: String?=null,index: Int?=null) { val turn=++utteranceSerial;val commandId=beginCommand();connect();if(turn!=utteranceSerial)return;rpc("command",JSONObject().put("async",true).put("command",JSONObject().put("commandId",commandId).put("action",action).put("target",target).put("objectId",objectId).apply { if(index!=null)put("index",index) })) }
     suspend fun search(target: String,objectId: String?=null)=command("find",target,objectId)
     suspend fun remember(target: String,objectId: String?=null)=command("remember",target,objectId)
     suspend fun selectObject(id: String) { val index=state.value.objectChoices.indexOfFirst { it.id==id };require(index>=0);command("select",index=index) }
@@ -248,7 +260,7 @@ class PcAssistantSession(
             }
         }
     }
-    private suspend fun cleanupCapture() { serial++;utteranceSerial++;sourceJob?.cancel();uploadJob?.cancel();qwenJob?.cancel();voiceJob?.cancel();sourceJob=null;uploadJob=null;qwenJob=null;voiceJob=null;source?.stop();source=null;latest=null;sentFrames.clear();qwen.disconnect() }
+    private suspend fun cleanupCapture() { feedback.begin(UUID.randomUUID().toString());turnStartedMs=0L;serial++;utteranceSerial++;sourceJob?.cancel();uploadJob?.cancel();qwenJob?.cancel();voiceJob?.cancel();sourceJob=null;uploadJob=null;qwenJob=null;voiceJob=null;source?.stop();source=null;latest=null;sentFrames.clear();qwen.disconnect() }
     suspend fun stop() { cleanupCapture();if(connected)runCatching { rpc("stop",timeout=3000) };socket?.close(1000,"foreground_ended");socket=null;connected=false;mutableState.value=mutableState.value.copy(running=false,voiceRequested=false,target=null,searchState=SearchState.IDLE,objectChoices=emptyList());speech.reset() }
     suspend fun records(): JSONArray { connect();return rpc("records").getJSONArray("result") }
     suspend fun history(id: String): List<LocationObservationEntity> { connect();val a=rpc("history",JSONObject().put("objectId",id)).getJSONArray("result");return (0 until a.length()).map { val o=a.getJSONObject(it);LocationObservationEntity(o.getString("id"),id,o.optString("placeId").takeUnless { it=="null"||it.isBlank() },o.getString("location"),o.getString("anchor"),if(o.isNull("observedAtMs"))null else o.getLong("observedAtMs"),o.getBoolean("confirmed"),o.getLong("recordedAtMs"),o.getString("source")) } }

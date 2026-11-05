@@ -9,7 +9,7 @@ import java.io.Closeable
 import java.util.Locale
 
 enum class SpeechPriority { P0, P1, P2, P3 }
-data class SpeechEvent(val key: String, val text: String, val priority: SpeechPriority)
+data class SpeechEvent(val key: String, val text: String, val priority: SpeechPriority, val onStarted: (() -> Unit)? = null)
 
 internal class SpeechDeduplicator {
     private val spoken = mutableSetOf<String>()
@@ -28,6 +28,8 @@ class SpeechCoordinator(
     private var ready = false
     private var closed = false
     private val waiting = ArrayDeque<SpeechEvent>()
+    private val starting = java.util.concurrent.ConcurrentHashMap<String, () -> Unit>()
+    @Volatile private var epoch = 0L
     private lateinit var tts: TextToSpeech
 
     init {
@@ -40,7 +42,10 @@ class SpeechCoordinator(
         }
         tts.apply {
         setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) = microphoneEnabled(false)
+            override fun onStart(utteranceId: String?) {
+                if (utteranceId != null) starting.remove(utteranceId)?.invoke()
+                microphoneEnabled(false)
+            }
             override fun onDone(utteranceId: String?) = resumeMicrophoneAfterSpeech()
             @Deprecated("Deprecated in Java") override fun onError(utteranceId: String?) = resumeMicrophoneAfterSpeech()
         })
@@ -49,13 +54,18 @@ class SpeechCoordinator(
 
     fun announce(event: SpeechEvent) {
         if (!enabled || !deduplicator.accept(event) || closed) return
+        val acceptedEpoch = epoch
         handler.post {
+            if (acceptedEpoch != epoch || !enabled || closed) return@post
+            if (event.priority == SpeechPriority.P0) { waiting.clear(); starting.clear() }
             if (!ready) waiting.addLast(event) else speak(event)
         }
     }
 
     fun reset() {
+        epoch++
         deduplicator.clear()
+        starting.clear()
         handler.post { waiting.clear(); tts.stop(); microphoneEnabled(true) }
     }
 
@@ -65,6 +75,7 @@ class SpeechCoordinator(
 
     private fun speak(event: SpeechEvent) {
         val queue = if (event.priority == SpeechPriority.P0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+        event.onStarted?.let { starting[event.key] = it }
         tts.speak(event.text, queue, null, event.key)
     }
 
