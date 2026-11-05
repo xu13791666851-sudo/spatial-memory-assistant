@@ -21,9 +21,18 @@ class TargetMatcher(context: Context) {
         require(aliases.values.flatten().all(modelLabels::contains)) { "target_aliases.json 包含 YOLO 模型不存在的类别" }
     }
 
-    fun labelsFor(target: String): Set<String> = aliases[normalizeTarget(target)].orEmpty()
+    fun labelsFor(target: String): Set<String> {
+        return resolveTargetAlias(target,aliases.keys)?.let { aliases[it] }.orEmpty()
+    }
     fun supports(target: String) = labelsFor(target).isNotEmpty()
     fun matches(target: String, label: String) = label.lowercase() in labelsFor(target)
+}
+
+internal fun resolveTargetAlias(value: String,keys: Set<String>): String? {
+    val name=normalizeTarget(value)
+    if(name in keys) return name
+    if(Regex("和|或者|或是|以及|、").containsMatchIn(name)) return null
+    return keys.filter { name.endsWith(it) }.maxByOrNull(String::length)
 }
 
 internal fun normalizeTarget(value: String) = value.trim().lowercase()

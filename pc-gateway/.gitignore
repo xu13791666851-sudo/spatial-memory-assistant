@@ -1,0 +1,9 @@
+node_modules/
+.venv/
+runtime/
+models/*.pt
+.env*
+!.env.example
+__pycache__/
+*.pyc
+test/.runtime/

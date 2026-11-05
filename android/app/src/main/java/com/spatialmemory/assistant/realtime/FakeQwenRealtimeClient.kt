@@ -16,8 +16,6 @@ class FakeQwenRealtimeClient : QwenRealtimeClient {
     override suspend fun sendFrame(frame: FramePacket, prompt: String) {
         if (prompt.isNotBlank()) mutableEvents.tryEmit(QwenEvent.Transcript("assistant", "模拟千问收到 ${frame.source} 画面：$prompt"))
     }
-    override suspend fun verifyCandidate(fullFrame: FramePacket, cropFrame: FramePacket, request: CandidateVerificationRequest) = Unit
-    override suspend fun inspectTarget(frame: FramePacket, request: CandidateVerificationRequest) = Unit
     override suspend fun sendText(text: String) {
         mutableEvents.tryEmit(QwenEvent.Transcript("user", text))
     }
@@ -37,8 +35,6 @@ class AoqSdkRequiredClient : QwenRealtimeClient {
         error("AOQ Android SDK 尚未放入 app/libs；请按 docs/AOQ接入点.md 接入官方 SDK")
     }
     override suspend fun sendFrame(frame: FramePacket, prompt: String) = Unit
-    override suspend fun verifyCandidate(fullFrame: FramePacket, cropFrame: FramePacket, request: CandidateVerificationRequest) = Unit
-    override suspend fun inspectTarget(frame: FramePacket, request: CandidateVerificationRequest) = Unit
     override suspend fun sendText(text: String) = Unit
     override suspend fun interrupt() = Unit
     override fun setMicrophoneEnabled(enabled: Boolean) = Unit

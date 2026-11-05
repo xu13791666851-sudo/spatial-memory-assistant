@@ -1,0 +1,30 @@
+{
+  "source": "用户提供的 i see you-方案B轻量交接/方案B/gateway",
+  "upstream": "https://github.com/QwenAudio/qwen-audio-agent",
+  "copied": [
+    {
+      "file": "b-yolo.py",
+      "sha256": "1863df6d2c323e7c7ab67ecade6a445cdd1621455010a3f61da849c42506d81e"
+    },
+    {
+      "file": "b-yolo.mjs",
+      "sha256": "c8e648ea1a6ddad53c8719473c57e2f28e22994940fef8447ebddbded571b65c"
+    },
+    {
+      "file": "g03-esp32.mjs",
+      "sha256": "e43546fbdc3ef4535b1c1ffe5178bd06b42b0efd5ede9208241dcae791681503"
+    },
+    {
+      "file": "g06-phone-source.mjs",
+      "sha256": "5fbe1f224355171836b67cb26683b3b76681a841cda795409ecb2aba6a56d19e"
+    },
+    {
+      "file": "LICENSE",
+      "sha256": "ae4681f51d8ce882c8fefc62b810015a14cccba610dd22aa98cfd6babeaf3579"
+    },
+    {
+      "file": "NOTICE",
+      "sha256": "c1acc1f1c53e467b0dd07898e5a5195a8f1c90ab7f0ec9ccaafec27fadd716ed"
+    }
+  ]
+}

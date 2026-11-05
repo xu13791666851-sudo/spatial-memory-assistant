@@ -3,6 +3,7 @@ package com.spatialmemory.assistant.orchestrator
 import com.spatialmemory.assistant.camera.CameraSource
 import com.spatialmemory.assistant.camera.FramePacket
 import com.spatialmemory.assistant.inference.Detection
+import com.spatialmemory.assistant.memory.MemoryChoice
 
 enum class SearchState { IDLE, LEARNING, SEARCHING, VERIFYING, GUIDING, COMPLETED, CANCELLED }
 
@@ -10,6 +11,7 @@ data class AnalyzedFrame(val frame: FramePacket, val detections: List<Detection>
 
 data class AssistantState(
     val running: Boolean = false,
+    val voiceRequested: Boolean = false,
     val target: String? = null,
     val searchId: String? = null,
     val searchState: SearchState = SearchState.IDLE,
@@ -30,6 +32,8 @@ data class AssistantState(
     val lastSpeech: String? = null,
     val message: String = "尚未开始",
     val error: String? = null,
+    val objectChoices: List<MemoryChoice> = emptyList(),
+    val notice: String? = null,
 )
 
 internal fun AssistantState.messageWhileProcessing(frameId: Long): String = when (searchState) {
@@ -37,8 +41,4 @@ internal fun AssistantState.messageWhileProcessing(frameId: Long): String = when
     else -> "已收到第 $frameId 帧，YOLO 推理中…"
 }
 
-internal fun AssistantState.searchStateAfterVoiceError(): SearchState = when {
-    target.isNullOrBlank() -> SearchState.IDLE
-    searchState == SearchState.VERIFYING -> SearchState.SEARCHING
-    else -> searchState
-}
+internal fun AssistantState.searchStateAfterVoiceError(): SearchState = searchState

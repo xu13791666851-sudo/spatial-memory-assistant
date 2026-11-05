@@ -45,7 +45,7 @@ npm run deploy:yolo-preview
 
 浏览器检查沿用仓库的 Playwright 依赖方式，可用 `PLAYWRIGHT_MODULE` 指向已安装的 Playwright。
 
-此分支的 `wrangler.jsonc` **专门指向测试 Worker** `i-see-you-yolo-preview`，避免常规部署命令发布正式站。Pages 配置在 `cloudflare/yolo-pages/wrangler.jsonc`。测试站通过私有服务连接调用现有后台，运行时密钥不用重新复制，正式站的配置、部署及网址不变。测试请求会使用同一个千问账号和原有请求频率额度。
+合并主分支后，根目录的 `wrangler.jsonc` 仍指向正式 Worker `i-see-you-spatial-memory`；测试 Worker `i-see-you-yolo-preview` 使用独立的 `wrangler.yolo-preview.jsonc`，`npm run deploy:yolo-preview` 会显式选择它。Pages 配置在 `cloudflare/yolo-pages/wrangler.jsonc`。测试站通过私有服务连接调用现有后台，运行时密钥不用重新复制。测试请求会使用同一个千问账号和原有请求频率额度。
 
 首次创建同名 Pages 项目，生产分支填 `main`，生产及预览环境的 `MEMORY_API` 绑定到测试 Worker。发布命令只部署测试 Worker 和此测试 Pages 项目，不合并主分支。
 

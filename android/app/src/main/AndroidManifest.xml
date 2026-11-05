@@ -22,7 +22,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="I SEE YOU 原生测试"
+        android:label="${appLabel}"
         android:usesCleartextTraffic="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.SpatialMemory">

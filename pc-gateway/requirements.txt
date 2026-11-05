@@ -1,0 +1,3 @@
+ultralytics==8.4.174
+Pillow==12.3.0
+cryptography==46.0.7

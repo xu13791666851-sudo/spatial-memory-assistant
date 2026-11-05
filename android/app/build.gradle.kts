@@ -4,21 +4,28 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+val isolatedTabletTest = providers.gradleProperty("isolatedTabletTest")
+    .map(String::toBooleanStrict).orElse(false).get()
+
 android {
     namespace = "com.spatialmemory.assistant"
     compileSdk = 36
 
     defaultConfig {
         // Separate install preserves every existing test app and its private memories.
-        applicationId = "com.spatialmemory.assistant.iseeyou.native"
+        applicationId = if (isolatedTabletTest) "com.spatialmemory.assistant.iseeyou.tablettest" else "com.spatialmemory.assistant.iseeyou.native"
+        manifestPlaceholders["appLabel"] = if (isolatedTabletTest) "I SEE YOU 平板测试" else "I SEE YOU 原生测试"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.5.1-native-preview"
+        versionCode = 22
+        versionName = if (isolatedTabletTest) "0.16.0-tablet-memory" else "0.16.0-native-memory"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
+        buildConfigField("boolean", "PC_GATEWAY_MODE", "true")
         buildConfigField("String", "QWEN_API_KEY", "\"\"")
         buildConfigField("String", "GATEWAY_URL", "\"https://i-see-you-android-core-test.pages.dev\"")
+        buildConfigField("String", "SUPABASE_URL", "\"https://awkzcvvzrsfjvqlloqqi.supabase.co\"")
+        buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_fWXqw7l-psI5pqwbY3zQlA_-Z7D74Yp\"")
     }
 
     buildTypes {

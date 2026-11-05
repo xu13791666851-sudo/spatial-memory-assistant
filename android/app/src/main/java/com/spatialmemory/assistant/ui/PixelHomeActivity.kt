@@ -3,6 +3,7 @@ package com.spatialmemory.assistant.ui
 import android.Manifest
 import android.app.Dialog
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -32,8 +33,12 @@ import androidx.lifecycle.lifecycleScope
 import com.spatialmemory.assistant.BuildConfig
 import com.spatialmemory.assistant.R
 import com.spatialmemory.assistant.api.AssistantController
+import com.spatialmemory.assistant.backup.MemoryBackupCoordinator
+import com.spatialmemory.assistant.conversation.ConversationStore
+import com.spatialmemory.assistant.debug.MemoryBackupDiagnostics
 import com.spatialmemory.assistant.camera.*
 import com.spatialmemory.assistant.debug.YoloPreviewView
+import com.spatialmemory.assistant.debug.JevDirectDiagnostics
 import com.spatialmemory.assistant.hardware.*
 import com.spatialmemory.assistant.inference.*
 import com.spatialmemory.assistant.memory.*
@@ -51,8 +56,11 @@ class PixelHomeActivity : ComponentActivity() {
     private lateinit var controller: AssistantController
     private lateinit var qwen: AoqQwenRealtimeClient
     private lateinit var speech: SpeechCoordinator
-    private lateinit var detector: YoloDetector
+    private lateinit var detector: FrameDetector
+    private var pc: com.spatialmemory.assistant.pc.PcAssistantSession? = null
+    private var pcConnectionJob: Job? = null
     private lateinit var records: NativeRecords
+    private lateinit var backup: MemoryBackupCoordinator
     private lateinit var provisioner: Esp32Provisioner
     private lateinit var cameraPreview: PreviewView
     private lateinit var yoloPreview: YoloPreviewView
@@ -69,9 +77,18 @@ class PixelHomeActivity : ComponentActivity() {
     private var pendingPermission: CompletableDeferred<Boolean>? = null
     private var recordDialog: Dialog? = null
     private var conversationBody: LinearLayout? = null
-    private var showingMemories = false
+    private var conversationScroll: ScrollView? = null
+    private enum class RecordsTab { CURRENT, HISTORY, MEMORIES }
+    private var recordsTab = RecordsTab.CURRENT
+    private val showingMemories get() = recordsTab == RecordsTab.MEMORIES
+    private var selectedHistory: String? = null
+    private var chatLimit = 200
+    private var resettingConversation = false
+    private var choiceDialog: android.app.AlertDialog? = null
+    private var shownChoices = emptyList<String>()
     private var lastSpeech: String? = null
-    private val chat = mutableListOf<Pair<String, String>>()
+    private var jevDiagnosticJob: Job? = null
+    private val conversations by lazy { ConversationStore(this) }
     private val actionMutex = kotlinx.coroutines.sync.Mutex()
     private val prefs by lazy { getSharedPreferences("iseeyou-native", MODE_PRIVATE) }
     private val permission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -82,32 +99,45 @@ class PixelHomeActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         buildHome()
         restoreChat()
-        detector = YoloDetector(this)
+        detector = if (BuildConfig.PC_GATEWAY_MODE) object : FrameDetector { override fun detect(jpeg: ByteArray, rotationDegrees: Int, threshold: Float) = emptyList<Detection>() } else YoloDetector(this)
         val database = AppDatabase.get(this)
         val repository = MemoryRepository(this, database.memoryDao(), database.objectMemoryDao())
-        records = NativeRecords(this, database, repository)
+        // Record authority is selected after constructing the PC connection.
         val credential = NativeGatewayCredentialClient(BuildConfig.GATEWAY_URL)
-        qwen = AoqQwenRealtimeClient(this, credential::get, QwenImageVerifier("", gateway = BuildConfig.GATEWAY_URL))
-        speech = SpeechCoordinator(this) { enabled -> qwen.setMicrophoneEnabled(enabled && foreground && controller.state.value.running) }
+        qwen = AoqQwenRealtimeClient(this, credential::get)
+        speech = SpeechCoordinator(this) { enabled ->
+            qwen.setLocalSpeechActive(!enabled)
+            qwen.setMicrophoneEnabled(enabled && foreground && controller.state.value.running && controller.state.value.voiceRequested)
+        }
         qwen.setPlaybackEnabled(!prefs.getBoolean("reader", false))
         speech.setEnabled(!prefs.getBoolean("reader", false) && prefs.getBoolean("readLocal", true))
-        controller = AssistantController(AssistantOrchestrator(detector, TargetMatcher(this), PerceptionEngine(TargetMatcher(this), HistogramObjectEmbedder()), repository, qwen, speech, File(cacheDir, "active-search-candidate")))
+        backup = MemoryBackupCoordinator(this, database, lifecycleScope, { message ->
+            appendChat("assistant", message)
+            if(foreground) speech.announce(SpeechEvent("backup-${System.nanoTime()}", message, SpeechPriority.P1))
+            if(showingMemories) refreshRecords()
+        }, { stopSession() }, automatic = { !BuildConfig.PC_GATEWAY_MODE })
+        pc = if (BuildConfig.PC_GATEWAY_MODE) com.spatialmemory.assistant.pc.PcAssistantSession(this,database,qwen,speech,lifecycleScope,backup::handle,conversationId=conversations::initialize) { if(showingMemories) refreshRecords() } else null
+        records = NativeRecords(this, database, repository, pc)
+        controller = AssistantController(AssistantOrchestrator(detector, TargetMatcher(this), PerceptionEngine(TargetMatcher(this), HistogramObjectEmbedder()), repository, qwen, VisionReviewRouter(this), speech, File(cacheDir, "active-search-candidate"), memoryCommand = backup::handle), pc)
         provisioner = Esp32Provisioner(this)
         prefs.getString("esp32", null)?.let { raw -> runCatching {
             val value = JSONObject(raw)
             esp32 = Esp32Connection(value.getString("baseUrl"), value.getString("streamUrl"), value.optString("deviceId"), value.optString("token"), value.optBoolean("legacy"))
         } }
         lifecycleScope.launch { controller.state.collect { state ->
-            val memoryChanged = state.rememberedObjectId != lastState.rememberedObjectId
+            val memoryChanged = state.rememberedObjectId != lastState.rememberedObjectId ||
+                (state.rememberedObjectId!=null && state.searchState==SearchState.IDLE &&
+                    (lastState.searchState!=SearchState.IDLE || state.lastSpeech!=lastState.lastSpeech))
             lastState = state
             renderState(state)
+            showObjectChoices(state)
             state.lastSpeech?.takeIf { it.isNotBlank() && it != lastSpeech }?.let { lastSpeech = it; appendChat("assistant", it) }
             if (memoryChanged && showingMemories) refreshRecords()
         } }
         lifecycleScope.launch { qwen.state.collect { renderState(lastState) } }
         lifecycleScope.launch { qwen.events.collect { event ->
-            if (event is QwenEvent.Transcript) {
-                appendChat(event.role, event.text)
+            if (event is QwenEvent.Transcript && controller.state.value.running && controller.state.value.voiceRequested) {
+                if (event.role == "user" && !MemoryBackupCoordinator.sensitive(event.text) && !com.spatialmemory.assistant.pc.PcAssistantSession.sensitive(event.text)) appendChat(event.role, event.text)
                 if (event.role == "user" && Regex("^(关闭摄像头|结束对话|停止观察)[。！!？?]*$").matches(event.text.trim())) {
                     action { stopSession() }
                 }
@@ -125,6 +155,14 @@ class PixelHomeActivity : ComponentActivity() {
                 yoloPreview.showFrame(bitmap, analyzed.detections, analyzed.frame.source != CameraSource.PHONE)
             }
         }
+        jevDiagnosticJob = JevDirectDiagnostics.handle(this, intent) { stopSession() }
+        MemoryBackupDiagnostics.handle(this, intent) { stopSession() }?.let { jevDiagnosticJob = it }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        JevDirectDiagnostics.handle(this, intent) { stopSession() }?.let { job -> jevDiagnosticJob?.cancel();jevDiagnosticJob = job }
+        MemoryBackupDiagnostics.handle(this, intent) { stopSession() }?.let { job -> jevDiagnosticJob?.cancel();jevDiagnosticJob = job }
     }
 
     private fun buildHome() {
@@ -177,12 +215,12 @@ class PixelHomeActivity : ComponentActivity() {
         setContentView(outside)
     }
 
-    private suspend fun requirePermissions(hardware: Boolean = false): Boolean {
+    private suspend fun requirePermissions(hardware: Boolean = false, enableVoice: Boolean = true): Boolean {
         val needed = buildList {
             if (hardware) {
                 if (Build.VERSION.SDK_INT >= 31) { add(Manifest.permission.BLUETOOTH_SCAN); add(Manifest.permission.BLUETOOTH_CONNECT) }
                 else add(Manifest.permission.ACCESS_FINE_LOCATION)
-            } else { if (sourceKind == "phone") add(Manifest.permission.CAMERA); add(Manifest.permission.RECORD_AUDIO) }
+            } else { if (sourceKind == "phone") add(Manifest.permission.CAMERA); if (enableVoice) add(Manifest.permission.RECORD_AUDIO) }
         }.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
         if (needed.isEmpty()) return true
         if (pendingPermission != null) return false
@@ -190,8 +228,8 @@ class PixelHomeActivity : ComponentActivity() {
         permission.launch(needed.toTypedArray()); return result.await()
     }
 
-    private suspend fun startSession() {
-        check(requirePermissions()) { "请允许相机和麦克风后再开始。" }
+    private suspend fun startSession(enableVoice: Boolean = true) {
+        check(requirePermissions(enableVoice = enableVoice)) { if (enableVoice) "请允许相机和麦克风后再开始。" else "请允许相机后再开始。" }
         check(foreground) { "请返回应用后再开始。" }
         sessionSerial++
         headline.text = "正在启动…"
@@ -199,7 +237,7 @@ class PixelHomeActivity : ComponentActivity() {
             "esp32" -> Esp32CameraSource(Esp32Api(checkNotNull(esp32) { "请先连接摄像头。" }))
             else -> PhoneCameraSource(this, this, cameraPreview)
         }
-        controller.start(source)
+        controller.start(source, enableVoice)
     }
 
     private suspend fun stopSession() { sessionSerial++; controller.stop(); yoloPreview.clearFrame() }
@@ -209,20 +247,25 @@ class PixelHomeActivity : ComponentActivity() {
         voiceButton.text = if (state.running) "结束" else "语音找物"
         sourceLabel.text = if (state.source == CameraSource.ESP32 || sourceKind == "esp32") "● 外接摄像头" else "● 手机摄像头"
         headline.text = when {
+            state.objectChoices.isNotEmpty() -> "请选择具体的物品"
             !state.running -> if (state.error != null) "启动没有完成" else "点击语音找物开始"
+            state.searchState == SearchState.LEARNING -> state.message.takeIf { it.startsWith("正在记住") } ?: "正在记住物品的样子和位置"
+            state.message == "正在看眼前的画面" -> "正在观察眼前的画面"
             qwen.state.value == RealtimeState.CONNECTING && state.target.isNullOrBlank() -> "正在连接语音，请稍候"
-            state.target.isNullOrBlank() -> "说出你想找或记住的物品"
-            state.searchState == SearchState.LEARNING -> "正在记住：${state.target}"
+            state.target.isNullOrBlank() -> state.notice ?: "说出你想找或记住的物品"
             state.searchState == SearchState.VERIFYING -> "发现疑似物品，正在确认"
             state.searchState == SearchState.SEARCHING -> "正在寻找：${state.target}"
             else -> state.message.takeUnless { it.startsWith("YOLO") || it.startsWith("已收到第") } ?: "说出你想找或记住的物品"
         }
         detail.text = when {
-            !state.running -> state.error ?: "准备好后说：帮我找水杯，或记住水杯"
-            state.error?.startsWith("千问") == true -> "语音暂时未连接，可以结束后重试"
+            !state.running -> state.error ?: if(BuildConfig.PC_GATEWAY_MODE)state.message.takeIf { it.contains("电脑") } ?: "电脑处理模式 · 记录中可输入指令" else "记录中可输入指令，也可直接查询位置历史"
+            state.qwenVerifying -> "正在复核图片 · 请保持画面稳定"
+            state.searchState == SearchState.SEARCHING && Regex("未完成|变化|不能确定|未找到|缺失|重新扫描").containsMatchIn(state.message) -> state.message
+            !state.voiceRequested -> "文字找物模式 · 麦克风未开启"
+            state.error?.startsWith("千问") == true -> "语音未连接 · 可在记录中输入指令，图片复核仍可使用"
             state.error != null -> state.error
-            state.searchState == SearchState.LEARNING -> "外观样本 ${state.learningSamples}/3 · 请按语音提示调整角度"
-            qwen.state.value == RealtimeState.FAILED || qwen.state.value == RealtimeState.DISCONNECTED -> "本地识别运行中 · 语音未连接，请结束后重试"
+            state.searchState == SearchState.LEARNING -> "正在自动取景，请稍候"
+            qwen.state.value == RealtimeState.FAILED || qwen.state.value == RealtimeState.DISCONNECTED -> "语音未连接 · 可在记录中输入指令，图片复核仍可使用"
             qwen.state.value != RealtimeState.CONNECTED -> "画面已开启 · 语音正在连接"
             else -> "语音已就绪 · 识别框显示当前检测结果"
         }
@@ -325,10 +368,11 @@ class PixelHomeActivity : ComponentActivity() {
         dialog.dismiss()
         action {
             val restart = controller.state.value.running
+            val restartWithVoice = controller.state.value.voiceRequested
             stopSession(); sourceKind = kind
             cameraPreview.visibility = if (kind == "phone") View.VISIBLE else View.INVISIBLE
             renderState(controller.state.value)
-            if (restart) startSession()
+            if (restart) startSession(enableVoice = restartWithVoice)
         }
     }
 
@@ -337,57 +381,107 @@ class PixelHomeActivity : ComponentActivity() {
     }
 
     private fun showRecords() {
-        val (dialog, body) = sheet("记录")
+        val (dialog, body) = sheet("记录", scroll = false)
         recordDialog = dialog
         val tabs = LinearLayout(this)
-        val conversation = button("对话") { showingMemories = false; refreshRecords() }
-        val memories = button("物品记忆") { showingMemories = true; refreshRecords() }
+        val conversation = button("当前对话") { recordsTab = RecordsTab.CURRENT;chatLimit=200;refreshRecords() }
+        val history = button("历史") { recordsTab = RecordsTab.HISTORY;selectedHistory=null;chatLimit=200;refreshRecords() }
+        val memories = button("物品记忆") { recordsTab = RecordsTab.MEMORIES; refreshRecords() }
         tabs.addView(conversation, LinearLayout.LayoutParams(0, dp(48), 1f))
+        tabs.addView(history, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(8) })
         tabs.addView(memories, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(8) })
         body.addView(tabs)
-        conversationBody = column(); body.addView(conversationBody, spaced())
+        body.addView(button("新会话") { action { newConversation() } }.apply {
+            id=R.id.native_new_conversation
+        }, spaced())
+        conversationBody = column()
+        conversationScroll = ScrollView(this).apply { id=R.id.native_records_scroller;isFillViewport = true;addView(conversationBody) }
+        body.addView(conversationScroll, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin=dp(10) })
         // A text fallback remains in Records, keeping the camera and settings uncluttered.
-        val typed = input("输入你想说的话")
+        val typed = input("输入你想说的话").apply {
+            id=R.id.native_records_input
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+            imeOptions = imeOptions or android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+        }
         body.addView(typed, spaced())
         body.addView(button("发送") {
             val text = typed.text.toString().trim()
             if (text.isBlank()) return@button
             action {
-                if (!controller.state.value.running) startSession()
+                if(text in setOf("新会话","开始新会话")) { newConversation();typed.text.clear();return@action }
+                if (pc?.maintenance(text) == true || (pc == null && backup.handle(text))) { typed.text.clear();return@action }
+                if (!controller.state.value.running && controller.requiresCamera(text)) startSession(enableVoice = false)
+                recordsTab=RecordsTab.CURRENT
                 appendChat("user", text); controller.submitText(text); typed.text.clear()
             }
-        }, spaced())
+        }.apply { id=R.id.native_records_send }, spaced())
         body.addView(button("回到首页") { dialog.dismiss() }, spaced())
-        dialog.setOnDismissListener { recordDialog = null; conversationBody = null }
-        refreshRecords(); dialog.showSized()
+        dialog.setOnDismissListener { recordDialog = null; conversationBody = null;conversationScroll=null }
+        refreshRecords(); dialog.showSized(expand = true)
     }
 
     private fun refreshRecords() {
         val body = conversationBody ?: return
         body.removeAllViews()
+        if(recordsTab == RecordsTab.HISTORY && selectedHistory == null) {
+            body.addView(label("最近 30 天的会话，打开应用时自动清理过期记录。",14f))
+            val current=conversations.initialize()
+            val sessions=conversations.sessions().filter { it.id!=current }
+            if(sessions.isEmpty())body.addView(label("还没有历史对话。",15f),spaced())
+            for(session in sessions) {
+                val title=if(session.legacy)"以前的对话（日期未记录）" else java.time.Instant.ofEpochMilli(session.createdAtMs)
+                    .atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm"))
+                body.addView(menuButton(title,"${session.messageCount} 条 · ${session.preview.take(28)}") {
+                    selectedHistory=session.id;chatLimit=200;refreshRecords()
+                },spaced())
+            }
+            return
+        }
         if (!showingMemories) {
-            if (chat.isEmpty()) body.addView(label("开始对话后，记录会保存在这里。", 15f))
-            for ((role, text) in chat) {
+            val session=if(recordsTab == RecordsTab.HISTORY)selectedHistory else conversations.initialize()
+            val chat=session?.let { conversations.messages(it,chatLimit) }.orEmpty()
+            if(recordsTab == RecordsTab.HISTORY)body.addView(button("返回历史列表") {selectedHistory=null;refreshRecords()},spaced())
+            if (chat.isEmpty()) body.addView(label(if(recordsTab == RecordsTab.HISTORY)"这段历史已过期或暂无消息。" else "这是一个新会话，可以开始提问。", 15f))
+            if(chat.size >= chatLimit)body.addView(button("查看更早的消息") {chatLimit+=200;refreshRecords()},spaced())
+            for (message in chat) {
+                val role=message.role
+                val text=message.text
                 val user = role == "user"
                 val bubble = column().apply {
                     background = rounded(if (user) Color.rgb(255, 240, 221) else PixelColors.pale)
                     setPadding(dp(12), dp(10), dp(12), dp(10))
                     addView(label(if (user) "我" else "I SEE YOU", 12f, true)); addView(label(text, 16f))
                 }
-                body.addView(bubble, LinearLayout.LayoutParams((resources.displayMetrics.widthPixels * .70).toInt(), -2).apply { gravity = if (user) Gravity.END else Gravity.START; topMargin = dp(10) })
+                body.addView(bubble, LinearLayout.LayoutParams(-1, -2).apply {
+                    marginStart=if(user)dp(18) else 0; marginEnd=if(user)0 else dp(18); topMargin=dp(10)
+                })
             }
+            if(recordsTab==RecordsTab.CURRENT)conversationScroll?.post { conversationScroll?.fullScroll(View.FOCUS_DOWN) }
         } else lifecycleScope.launch {
-            val items = records.all()
+            val items = try { records.all() } catch(error: Exception) {
+                if(error is CancellationException) throw error
+                if(conversationBody === body) body.addView(label(error.message ?: "电脑记忆暂时不可用",15f))
+                return@launch
+            }
             if (conversationBody !== body || !showingMemories) return@launch
-            if (items.length() == 0) body.addView(label("还没有物品记忆。开始后说“记住水杯”，按提示完成采集。", 15f))
+            if (items.length() == 0) body.addView(label("还没有物品记忆。开始后说“记住水杯”，自动保存当时画面。", 15f))
             repeat(items.length()) { index ->
                 val item = items.getJSONObject(index)
                 body.addView(column().apply {
                     background = rounded(PixelColors.pale); setPadding(dp(12), dp(10), dp(12), dp(10))
                     addView(label(item.getString("name"), 18f, true))
-                    addView(label("${item.optInt("sample_count")} 个外观样本 · ${item.optString("location")}", 14f))
+                    addView(label((if(item.optInt("sample_count")>0) "已保存目标参考照片" else if(item.optBoolean("appearance_observed"))"已保存外观描述和参考画面" else "尚无外观记录")+" · 上次位置记录：${item.optString("location")}", 14f))
+                    item.optString("capture_status_label").takeIf(String::isNotBlank)?.let { addView(label(it,14f)) }
+                    if(item.optString("suggested_location").isNotBlank()) addView(label("画面分析的待确认线索：${item.optString("suggested_location")}",13f))
+                    item.optString("appearance").takeIf(String::isNotBlank)?.let { addView(label(it, 14f)) }
+                    val rememberedAt = java.time.Instant.parse(item.getString("created_at")).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm:ss"))
+                    addView(label("记住时间：$rememberedAt", 13f))
                     addView(button("找这件") {
-                        recordDialog?.dismiss(); action { if (!controller.state.value.running) startSession(); controller.search(item.getString("name")) }
+                        recordDialog?.dismiss(); action { if (!controller.state.value.running) startSession(enableVoice = false); controller.search(item.getString("name"), item.getString("id")) }
+                    }, spaced())
+                    addView(button("位置历史") { showLocationHistory(item) }, spaced())
+                    addView(button("更新这件的外观") {
+                        recordDialog?.dismiss(); action { if (!controller.state.value.running) startSession(enableVoice = false); controller.remember(item.getString("name"), item.getString("id")) }
                     }, spaced())
                     addView(button("编辑记忆") { editMemory(item) }, spaced())
                     addView(button("删除记忆") {
@@ -405,7 +499,7 @@ class PixelHomeActivity : ComponentActivity() {
         val (dialog, body) = sheet("编辑记忆")
         val name = input("物品名称").apply { setText(item.getString("name")) }
         val appearance = input("外观描述").apply { setText(item.optString("appearance")) }
-        val location = input("位置线索").apply { setText(item.getString("location")) }
+        val location = input("你提供的位置（未经相机核实）").apply { setText(item.getString("location")) }
         body.addView(name); body.addView(appearance, spaced()); body.addView(location, spaced())
         body.addView(button("保存", true) { action {
             val update = JSONObject(item.toString()).put("name", name.text.toString()).put("appearance", appearance.text.toString()).put("location", location.text.toString())
@@ -414,22 +508,61 @@ class PixelHomeActivity : ComponentActivity() {
         dialog.showSized()
     }
 
-    private fun appendChat(role: String, text: String) {
-        if (text.isBlank()) return
-        val value = (if (role == "user") "user" else "assistant") to text
-        if (chat.lastOrNull() == value) return
-        chat.add(value); while (chat.size > 200) chat.removeAt(0)
-        prefs.edit().putString("native-chat", JSONArray().apply { chat.forEach { put(JSONObject().put("role", it.first).put("text", it.second)) } }.toString()).apply()
-        if (!showingMemories) refreshRecords()
+    private fun showObjectChoices(state: AssistantState) {
+        val ids = state.objectChoices.map { it.id }
+        if (ids == shownChoices) return
+        choiceDialog?.dismiss(); choiceDialog = null; shownChoices = ids
+        if (ids.isEmpty() || !foreground) return
+        choiceDialog = android.app.AlertDialog.Builder(this).setTitle("有同名物品，请选择")
+            .setItems(state.objectChoices.mapIndexed { index, item -> "第${index + 1}件：${item.name}\n${item.detail}" }.toTypedArray()) { _, index ->
+                action { controller.selectObject(ids[index]) }
+            }.setNegativeButton("取消") { _, _ -> controller.cancelSearch() }
+            .setOnCancelListener { controller.cancelSearch() }.show()
     }
 
-    private fun restoreChat() {
-        runCatching { JSONArray(prefs.getString("native-chat", "[]")) }.getOrNull()?.let { items ->
-            repeat(items.length()) { val item = items.optJSONObject(it); if (item != null) chat.add(item.optString("role") to item.optString("text")) }
+    private fun showLocationHistory(item: JSONObject) {
+        action {
+            val events = records.history(item.getString("id"))
+            val (dialog, body) = sheet("${item.getString("name")}的位置历史")
+            body.addView(label("这是过去的记录，不能证明物品现在仍在那里。", 15f))
+            if (events.isEmpty()) body.addView(label("还没有位置记录。编辑记忆可添加你提供的位置；说“记住水杯的位置”会先进行图片复核。", 15f), spaced())
+            val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(java.time.ZoneId.systemDefault())
+            events.forEach { event ->
+                val observed = event.observedAtMs?.let { "\n观察时间：${formatter.format(java.time.Instant.ofEpochMilli(it))}" }.orEmpty()
+                body.addView(label("${event.location}\n${locationSourceLabel(event.source)}\n记录时间：${formatter.format(java.time.Instant.ofEpochMilli(event.recordedAtMs))}$observed", 15f), spaced())
+            }
+            dialog.showSized()
         }
     }
 
-    private fun sheet(title: String): Pair<Dialog, LinearLayout> {
+    private fun appendChat(role: String, text: String) {
+        if (text.isBlank() || resettingConversation) return
+        if(conversations.append(role,text) && recordsTab == RecordsTab.CURRENT)refreshRecords()
+    }
+
+    private fun restoreChat() {
+        conversations.initialize()
+    }
+
+    private suspend fun newConversation() {
+        resettingConversation=true
+        try {
+            pcConnectionJob?.cancelAndJoin()
+            sessionSerial++
+            conversations.newSession()
+            controller.resetConversation()
+            yoloPreview.clearFrame()
+            lastSpeech=null
+            recordsTab=RecordsTab.CURRENT
+            selectedHistory=null
+            chatLimit=200
+        } finally {
+            resettingConversation=false
+            refreshRecords()
+        }
+    }
+
+    private fun sheet(title: String, scroll: Boolean = true): Pair<Dialog, LinearLayout> {
         val dialog = Dialog(this)
         val panel = column().apply { background = PixelBorder(PixelColors.paper, resources.displayMetrics.density); setPadding(dp(18), dp(14), dp(18), dp(18)) }
         val heading = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
@@ -437,15 +570,16 @@ class PixelHomeActivity : ComponentActivity() {
         heading.addView(button("×") { dialog.dismiss() }.apply { contentDescription = "关闭$title" }, LinearLayout.LayoutParams(dp(44), dp(44)))
         panel.addView(heading)
         val body = column()
-        panel.addView(ScrollView(this).apply { isFillViewport = false; addView(body) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        if(scroll)panel.addView(ScrollView(this).apply { isFillViewport = false; addView(body) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        else panel.addView(body, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin=dp(12) })
         dialog.setContentView(panel); dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         return dialog to body
     }
 
-    private fun Dialog.showSized() {
+    private fun Dialog.showSized(expand: Boolean = false) {
         show()
-        window?.setLayout(minOf(resources.displayMetrics.widthPixels - dp(24), dp(440)), -2)
+        window?.setLayout(minOf(resources.displayMetrics.widthPixels - dp(24), dp(440)), if(expand)resources.displayMetrics.heightPixels-dp(100) else -2)
         window?.decorView?.post {
             val available = resources.displayMetrics.heightPixels - dp(100)
             if ((window?.decorView?.height ?: 0) > available) window?.setLayout(minOf(resources.displayMetrics.widthPixels - dp(24), dp(440)), available)
@@ -490,8 +624,19 @@ class PixelHomeActivity : ComponentActivity() {
         ssid.orEmpty().removeSurrounding("\"").takeUnless { it == WifiManager.UNKNOWN_SSID }.orEmpty()
     }.getOrDefault("")
 
-    override fun onStart() { super.onStart(); foreground = true }
+    override fun onStart() {
+        if(::controller.isInitialized)conversations.initialize()
+        super.onStart(); foreground = true;if(::backup.isInitialized) backup.schedule()
+        pcConnectionJob?.cancel()
+        pcConnectionJob=lifecycleScope.launch {
+            try { if(pc?.consumePreparedConnection()!=true)pc?.connectIfConfigured() }
+            catch(error: CancellationException) { throw error }
+            catch(error: Exception) { notify(error.message ?: "电脑连接暂未完成") }
+        }
+    }
     override fun onStop() {
+        pcConnectionJob?.cancel();pcConnectionJob=null
+        jevDiagnosticJob?.cancel()
         foreground = false; sessionSerial++
         pendingPermission?.complete(false); pendingPermission = null
         lifecycleScope.launch { actionMutex.lock(); try { controller.stop(); provisioner.cancel() } finally { actionMutex.unlock() } }
@@ -499,11 +644,12 @@ class PixelHomeActivity : ComponentActivity() {
     }
     override fun onDestroy() {
         foreground = false; sessionSerial++
+        if(::backup.isInitialized) backup.close()
         speech.close()
         // Finish native cleanup even though the activity lifecycle is being cancelled.
         CoroutineScope(Dispatchers.Main.immediate + SupervisorJob()).launch {
             actionMutex.lock()
-            try { controller.stop(); provisioner.cancel(); detector.close(); yoloPreview.clearFrame() }
+            try { controller.stop(); provisioner.cancel(); (detector as? java.io.Closeable)?.close(); yoloPreview.clearFrame() }
             finally { actionMutex.unlock(); cancel() }
         }
         super.onDestroy()

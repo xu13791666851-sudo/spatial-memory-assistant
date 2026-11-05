@@ -16,7 +16,7 @@ import kotlin.math.roundToInt
 
 data class ModelInfo(val inputShape: IntArray, val outputShape: IntArray, val labels: Int, val bytes: Long)
 
-class YoloDetector(private val context: Context) : Closeable {
+class YoloDetector(private val context: Context) : Closeable, FrameDetector {
     private val labels = context.assets.open("yolo_labels.json").bufferedReader().use { reader ->
         val array = JSONArray(reader.readText())
         List(array.length()) { array.getString(it) }
@@ -38,7 +38,7 @@ class YoloDetector(private val context: Context) : Closeable {
     )
 
     @Synchronized
-    fun detect(jpeg: ByteArray, rotationDegrees: Int = 0, threshold: Float = 0.25f): List<Detection> {
+    override fun detect(jpeg: ByteArray, rotationDegrees: Int, threshold: Float): List<Detection> {
         val decoded = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: error("JPEG decode failed")
         val bitmap = decoded.rotated(rotationDegrees)
         if (bitmap !== decoded) decoded.recycle()

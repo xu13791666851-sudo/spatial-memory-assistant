@@ -45,7 +45,7 @@ import com.spatialmemory.assistant.orchestrator.AssistantState
 import com.spatialmemory.assistant.orchestrator.SearchState
 import com.spatialmemory.assistant.realtime.AoqQwenRealtimeClient
 import com.spatialmemory.assistant.realtime.DirectAoqCredentialClient
-import com.spatialmemory.assistant.realtime.QwenImageVerifier
+import com.spatialmemory.assistant.realtime.VisionReviewRouter
 import com.spatialmemory.assistant.speech.SpeechCoordinator
 import com.spatialmemory.assistant.ui.NativeGatewayCredentialClient
 import kotlinx.coroutines.Dispatchers
@@ -174,7 +174,7 @@ class HardwareDebugActivity : ComponentActivity() {
             },
             button("记住物品") {
                 val value = target.text.toString().trim()
-                if (value.isBlank()) headline.text = "请先输入要记住的物品" else controller.remember(value)
+                if (value.isBlank()) headline.text = "请先输入要记住的物品" else launchAction { controller.remember(value) }
             },
             button("拿到了") { controller.finishSearch() },
         )
@@ -195,7 +195,7 @@ class HardwareDebugActivity : ComponentActivity() {
         provisioner = Esp32Provisioner(this)
         phoneSource = PhoneCameraSource(this, this, cameraPreview)
         val credentialClient = NativeGatewayCredentialClient(BuildConfig.GATEWAY_URL)
-        val qwenClient = AoqQwenRealtimeClient(this, credentialClient::get, QwenImageVerifier("", gateway = BuildConfig.GATEWAY_URL))
+        val qwenClient = AoqQwenRealtimeClient(this, credentialClient::get)
         speechCoordinator = SpeechCoordinator(this, qwenClient::setMicrophoneEnabled)
         val database = AppDatabase.get(this)
         val embedder = HistogramObjectEmbedder()
@@ -206,6 +206,7 @@ class HardwareDebugActivity : ComponentActivity() {
                 perception = PerceptionEngine(TargetMatcher(this), embedder),
                 memory = MemoryRepository(this, database.memoryDao(), database.objectMemoryDao()),
                 qwen = qwenClient,
+                imageVerifier = VisionReviewRouter(this),
                 speech = speechCoordinator,
                 candidateDirectory = java.io.File(cacheDir, "active-search-candidate"),
             ),

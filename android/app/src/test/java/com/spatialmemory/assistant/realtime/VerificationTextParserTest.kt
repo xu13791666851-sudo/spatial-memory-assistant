@@ -29,4 +29,11 @@ class VerificationTextParserTest {
         assertFalse(result.sameObject)
         assertNull(VerificationTextParser.parse("当前画面看不清", request))
     }
+
+    @Test fun `missing personal identity or invalid confidence remains uncertain`() {
+        assertNull(VerificationTextParser.parse("TARGET_CHECK|visible=true|confidence=0.99", request))
+        for (confidence in listOf("NaN", "Infinity", "1.1", "-0.1", "bad")) {
+            assertNull(VerificationTextParser.parse("TARGET_CHECK|visible=true|sameObject=true|confidence=$confidence", request))
+        }
+    }
 }

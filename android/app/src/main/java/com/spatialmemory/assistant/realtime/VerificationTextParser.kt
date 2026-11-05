@@ -11,8 +11,8 @@ internal object VerificationTextParser {
             if (separator <= 0) null else field.substring(0, separator).trim() to field.substring(separator + 1).trim().trim('`', '"', '\'', '。')
         }.toMap()
         val visible = values["visible"]?.toBooleanStrictOrNull() ?: return null
-        val sameObject = values["sameObject"]?.toBooleanStrictOrNull() ?: visible
-        val confidence = values["confidence"]?.toFloatOrNull()?.coerceIn(0f, 1f) ?: 0f
+        val sameObject = values["sameObject"]?.toBooleanStrictOrNull() ?: return null
+        val confidence = values["confidence"]?.toFloatOrNull()?.takeIf { it.isFinite() && it in 0f..1f } ?: return null
         fun optional(name: String) = values[name]?.takeIf { it.isNotBlank() && it != "null" && it != "无" }
         return QwenEvent.TargetVisible(
             taskId = request.taskId,

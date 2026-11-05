@@ -6,6 +6,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TargetAliasAssetTest {
+    @Test fun `descriptive names retain the longest supported object noun`() {
+        val keys=setOf("水杯","杯子","电脑","笔记本电脑","钥匙")
+        assertEquals("水杯",resolveTargetAlias("这个蓝色水杯",keys))
+        assertEquals("笔记本电脑",resolveTargetAlias("银色笔记本电脑",keys))
+        assertEquals("钥匙",resolveTargetAlias("钥匙",keys))
+    }
+    @Test fun `another category and multiple objects cannot silently become a supported noun`() {
+        val keys=setOf("水杯","瓶子","电视")
+        org.junit.Assert.assertNull(resolveTargetAlias("电视柜",keys))
+        org.junit.Assert.assertNull(resolveTargetAlias("水杯和瓶子",keys))
+    }
     @Test fun `mouse phrases normalize to configured mouse label`() {
         val aliases = File("src/main/assets/target_aliases.json").readText()
 

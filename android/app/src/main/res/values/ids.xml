@@ -6,4 +6,8 @@
     <item name="native_headline" type="id" />
     <item name="native_pair" type="id" />
     <item name="native_source" type="id" />
+    <item name="native_new_conversation" type="id" />
+    <item name="native_records_scroller" type="id" />
+    <item name="native_records_input" type="id" />
+    <item name="native_records_send" type="id" />
 </resources>

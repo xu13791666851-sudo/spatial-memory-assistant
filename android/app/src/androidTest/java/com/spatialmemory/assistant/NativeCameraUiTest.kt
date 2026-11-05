@@ -74,7 +74,7 @@ class NativeCameraUiTest {
         val db = AppDatabase.get(context)
         val repository = MemoryRepository(context, db.memoryDao(), db.objectMemoryDao())
         val jpeg = InstrumentationRegistry.getInstrumentation().context.assets.open("bus.jpg").use { it.readBytes() }
-        val name = "自动验收公交车"
+        val name = "验收-${java.util.UUID.randomUUID()}"
         val item = repository.rememberObject(name, "bus", List(3) { AppearanceSample(jpeg, floatArrayOf(.25f, .5f, .25f), System.currentTimeMillis()) })
         try {
             val reopened = MemoryRepository(context, db.memoryDao(), db.objectMemoryDao()).findObject(name)
@@ -104,7 +104,20 @@ class NativeCameraUiTest {
             while (controller!!.state.value.yoloLatencyMs == null && System.currentTimeMillis() < deadline) Thread.sleep(200)
             assertTrue("CameraX must be running", controller!!.state.value.running)
             assertNotNull("Actual camera frames must reach YOLO: ${controller!!.state.value}", controller!!.state.value.yoloLatencyMs)
-            assertEquals("Voice and YOLO must work in the same home session", RealtimeState.CONNECTED, realtime!!.state.value)
+            val measured = controller!!.state.value
+            File(context.filesDir, "device-runtime-acceptance.json").writeText(org.json.JSONObject()
+                .put("model", android.os.Build.MODEL)
+                .put("androidVersion", android.os.Build.VERSION.RELEASE)
+                .put("actualCameraFramesReachedYolo", true)
+                .put("frameId", measured.frameId)
+                .put("yoloLatencyMs", measured.yoloLatencyMs)
+                .put("frameAgeMs", measured.frameAgeMs)
+                .put("realtimeConnected", realtime!!.state.value == RealtimeState.CONNECTED)
+                .put("error", measured.error)
+                .put("physicalMicrophoneTested", false)
+                .put("note", "CameraX and real detector; voice-command input below is a fixed WAV, not the microphone")
+                .toString())
+            assertEquals("Voice and YOLO must work in the same home session: ${measured.error}", RealtimeState.CONNECTED, realtime!!.state.value)
             // A fixed WAV goes through the real native audio encoder and cloud ASR;
             // do not substitute sendText or a fake transcript for the voice command.
             val sample = File(context.cacheDir, "voice-acceptance.wav")
@@ -118,10 +131,6 @@ class NativeCameraUiTest {
                 while (controller!!.state.value.target != "水杯" && System.currentTimeMillis() < spokenDeadline) Thread.sleep(200)
                 assertEquals("Cloud speech transcription must start the real search", "水杯", controller!!.state.value.target)
                 File(context.filesDir, "voice-command-acceptance.json").writeText("""{"cloud_speech_command_started_search":true,"target":"水杯","input_method":"fixed WAV published through native SDK and real cloud ASR","physical_microphone_tested":false}""")
-                instrument.uiAutomation.takeScreenshot()?.let { image ->
-                    File(context.filesDir, "voice-command-acceptance.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
-                    image.recycle()
-                }
             } finally { engine.stopAudioFile("acceptance"); sample.delete() }
             scenario.onActivity { it.findViewById<Button>(R.id.native_voice).performClick() }
             val end = System.currentTimeMillis() + 10_000

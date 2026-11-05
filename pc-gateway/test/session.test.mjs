@@ -1,0 +1,54 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {Session} from '../src/session.mjs';
+import {parseIntent} from '../src/intent.mjs';
+import {uuid} from '../src/util.mjs';
+import {memory,picture} from './helpers.mjs';
+test('new conversation clears pronouns and tasks but keeps saved objects', async t => {
+ const x=create(t);
+ x.session.bindConversation('first-conversation');
+ x.session.start();
+ x.session.frame(picture,x.session.source.generation,1,Date.now());
+ await x.command('记住这个杯子');
+ const objectId=x.m.all()[0].id;
+ assert.equal(x.session.focus.id,objectId);
+ x.session.bindConversation('second-conversation');
+ assert.equal(x.session.focus,null);
+ assert.equal(x.session.task,null);
+ assert.equal(x.session.source.fresh(),null);
+ assert.equal(x.m.all().length,1);
+ assert.equal(x.m.get(objectId).captures.length,1);
+ await x.command('它上次在哪');
+ assert.doesNotMatch(x.events.filter(e=>e.type==='reply').at(-1).message,/桌面上/);
+ await x.command('杯子上次在哪');
+ assert.match(x.events.filter(e=>e.type==='reply').at(-1).message,/桌面上/);
+});
+
+test('late visual results from an old conversation cannot answer or attach memory', async t => {
+ const review=deferred();
+ const x=create(t,{providers:{review:()=>review.promise}});
+ x.session.bindConversation('old-conversation');
+ x.session.start();
+ x.session.frame(picture,x.session.source.generation,1,Date.now());
+ const pending=x.command('记住这个杯子');
+ x.session.bindConversation('new-conversation');
+ review.resolve({box:[.3,.2,.7,.8],location:{location:'桌面上',anchor:'桌面'}});
+ await pending;
+ assert.equal(x.session.focus,null);
+ assert.equal(x.m.all()[0].appearances.length,0);
+ assert.equal(x.m.all()[0].locations.length,0);
+ assert.equal(x.m.all()[0].captures.length,1);
+ assert.equal(x.events.filter(e=>e.type==='reply').length,0);
+});
+const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
+function create(t,overrides={}){const m=memory(t),events=[];const providers={describe:async()=>({f:1,v:true,d:'蓝色杯子',l:'桌面上',a:'桌面',i:['杯子']}),review:async()=>({visible:.99,clear:.99,box:[.3,.2,.7,.8],location:{location:'桌面上',anchor:'桌面'}}),...overrides.providers};const session=new Session({memory:m,providers,emit:e=>events.push(e),...overrides});session.start();session.frame(picture,session.source.generation,1,Date.now());const command=text=>session.command({commandId:uuid(),text});return {m,events,session,command};}
+test('four intents and pronouns follow distinct routes',()=>{assert.deepEqual(parseIntent('记住这个杯子'),{action:'remember',target:'杯子',newIdentity:false});assert.equal(parseIntent('它上次在哪','杯子').action,'history');assert.equal(parseIntent('现在帮我找杯子')?.action,'find');assert.equal(parseIntent('桌子上面有什么').action,'describe');assert.equal(parseIntent('你记住它了吗','杯子').target,'杯子');});
+test('one sentence persists scene before either cloud reply',async t=>{const d=deferred(),r=deferred();const x=create(t,{providers:{describe:()=>d.promise,review:()=>r.promise}});const task=x.command('记住这个杯子');assert.equal(x.m.all()[0].captures.length,1);assert.equal(x.m.all()[0].captures[0].status,'CAPTURED');assert.equal(x.events.filter(e=>e.type==='reply').length,0);d.resolve({v:true,d:'蓝杯',l:'桌面上'});r.resolve({box:[.3,.2,.7,.8],location:{location:'桌面上',anchor:'桌面'}});await task;assert.equal(x.m.receipt(x.m.all()[0].id).status,'COMPLETE');assert.match(x.events.filter(e=>e.type==='reply').at(-1).message,/已记录.*蓝杯.*桌面上/);assert.equal(x.events.filter(e=>e.type==='reply').length,1);});
+test('crop error keeps scene and independent verified location',async t=>{const x=create(t,{crop:async()=>{throw Error('crop_failed');}});await x.command('记住这个杯子');const o=x.m.all()[0];assert.equal(o.captures[0].status,'LOCATION_ONLY');assert.equal(o.locations[0].source,'CAMERA_VERIFIED');assert.equal(o.appearances.length,0);});
+test('cloud failure does not lose captured scene or claim success',async t=>{const x=create(t,{providers:{describe:async()=>{throw Error();},review:async()=>{throw Error();}}});await x.command('记住这个杯子');assert.equal(x.m.all()[0].captures[0].status,'SCENE_ONLY');assert.doesNotMatch(x.events.filter(e=>e.type==='reply').at(-1).message,/已记住.*外观和位置/);});
+test('status/history queries read records, never invoke vision',async t=>{const x=create(t);await x.command('记住这个杯子');let invoked=0;x.session.providers={review:async()=>{invoked++;throw Error();},describe:async()=>{invoked++;throw Error();}};await x.command('记住它了吗');assert.match(x.events.filter(e=>e.type==='reply').at(-1).message,/已记住/);await x.command('它上次在哪');assert.match(x.events.filter(e=>e.type==='reply').at(-1).message,/桌面上/);assert.equal(invoked,0);});
+test('new scene question supersedes old speech without discarding already saved memory',async t=>{const r=deferred();const x=create(t,{providers:{describe:async()=>({v:true,d:'蓝杯',l:'桌面上',i:['杯子']}),review:()=>r.promise}});const task=x.command('记住这个杯子');await x.command('桌子上面有什么');r.resolve({box:[.3,.2,.7,.8],location:{location:'桌面上',anchor:'桌面'}});await task;assert.equal(x.m.all()[0].captures[0].status,'COMPLETE');assert.equal(x.events.filter(e=>e.type==='reply').at(-1).message,'当前画面可以看到：杯子。');});
+test('cancelled analysis cannot add photo or verified location',async t=>{const r=deferred();const x=create(t,{providers:{review:()=>r.promise}});const task=x.command('记住这个杯子');await x.command('取消');r.resolve({box:[.3,.2,.7,.8],location:{location:'桌面上'}});await task;assert.equal(x.m.all()[0].appearances.length,0);assert.equal(x.m.all()[0].locations.length,0);assert.equal(x.m.all()[0].captures.length,1);});
+test('duplicate memory command does not create another identity',async t=>{const x=create(t);const c={commandId:uuid(),text:'记住这个杯子'};await x.session.command(c);await x.session.command(c);assert.equal(x.m.all().length,1);assert.equal(x.m.all()[0].captures.length,1);});
+test('taking an object records movement even without a model-confirmed candidate',async t=>{const x=create(t);await x.command('记住这个杯子');await x.command('拿到了');assert.match(x.m.history(x.m.all()[0].id),/之后放在哪里还没有记录/);});
+test('a rejected highest-score cup advances to another candidate in the same scene',async t=>{let now=Date.now()+10_000,calls=0;const left={label:'cup',score:.95,box:[.1,.1,.35,.8],cropJpeg:picture.toString('base64')},right={label:'cup',score:.8,box:[.6,.1,.9,.8],cropJpeg:picture.toString('base64')};const x=create(t,{now:()=>now,detector:{ready:true,busy:false,run:async()=>({detections:[left,right],candidates:[left,right],inferenceMs:1})},providers:{review:async()=>({decision:++calls===1?'REJECT':'CONFIRM'})}});await x.command('帮我找杯子');await x.session.tick();await new Promise(r=>setImmediate(r));now+=3100;x.session.frame(picture,x.session.source.generation,2,now);await x.session.tick();await new Promise(r=>setImmediate(r));assert.equal(calls,2);assert.equal(x.session.state,'GUIDING');assert.deepEqual(x.session.lastConfirmed.box,right.box);});

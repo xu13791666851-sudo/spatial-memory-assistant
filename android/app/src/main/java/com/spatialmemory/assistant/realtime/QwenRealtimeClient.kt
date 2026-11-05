@@ -18,7 +18,7 @@ sealed interface QwenEvent {
         val objectState: String?,
         val confidence: Float,
     ) : QwenEvent
-    data class Error(val message: String) : QwenEvent
+    data class Error(val message: String, val code: String? = null) : QwenEvent
 }
 
 data class CandidateVerificationRequest(
@@ -30,6 +30,9 @@ data class CandidateVerificationRequest(
     val label: String,
     val confidence: Float,
     val normalizedBox: List<Float>,
+    val requiresPersonalMatch: Boolean = false,
+    val learning: Boolean = false,
+    val memoryObservation: Boolean = false,
 )
 
 interface QwenRealtimeClient {
@@ -37,10 +40,11 @@ interface QwenRealtimeClient {
     val events: Flow<QwenEvent>
     suspend fun connect()
     suspend fun sendFrame(frame: FramePacket, prompt: String)
-    suspend fun verifyCandidate(fullFrame: FramePacket, cropFrame: FramePacket, request: CandidateVerificationRequest)
-    suspend fun inspectTarget(frame: FramePacket, request: CandidateVerificationRequest)
     suspend fun sendText(text: String)
     fun setMicrophoneEnabled(enabled: Boolean)
+    fun setTaskMode(active: Boolean) = Unit
+    suspend fun interpretUser(text: String,currentTarget: String?,knownNames: List<String>): com.spatialmemory.assistant.dialogue.DialogueIntent? = null
+    suspend fun describeScene(frame: FramePacket,target: String?,question: String): SceneDescription? = null
     suspend fun interrupt()
     suspend fun disconnect()
 }

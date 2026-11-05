@@ -41,12 +41,12 @@ class FindTaskEngine {
         ).also { task = it }
     }
 
-    fun startLearning(targetName: String, source: CameraSource?): FindTask {
+    fun startLearning(targetName: String, source: CameraSource?, objectMemoryId: String? = null): FindTask {
         require(targetName.isNotBlank())
         return FindTask(
             id = UUID.randomUUID().toString(),
             targetName = targetName.trim(),
-            objectMemoryId = null,
+            objectMemoryId = objectMemoryId,
             status = FindStatus.LEARNING,
             source = source,
             startedAtMs = System.currentTimeMillis(),
@@ -75,7 +75,7 @@ class FindTaskEngine {
     fun verification(result: QwenEvent.TargetVisible): FindTaskEvent.Verified? {
         val current = task ?: return null
         if (!isCurrent(result)) return null
-        if (!result.visible || !result.sameObject) {
+        if (!result.visible || !result.sameObject || !result.confidence.isFinite() || result.confidence < 0.8f) {
             task = current.copy(status = FindStatus.WATCHING, announcedCandidateId = null)
             return null
         }
@@ -90,8 +90,8 @@ class FindTaskEngine {
 
     fun isCurrent(result: QwenEvent.TargetVisible): Boolean {
         val current = task ?: return false
-        return result.taskId == current.id && result.candidateId == current.announcedCandidateId &&
-            result.frameId >= (current.latestCandidateFrameId ?: Long.MIN_VALUE)
+        return current.status == FindStatus.CANDIDATE && result.taskId == current.id && result.candidateId == current.announcedCandidateId &&
+            result.frameId == current.latestCandidateFrameId
     }
 
     fun complete(): FindTask? = task?.copy(status = FindStatus.COMPLETED)?.also { task = it }

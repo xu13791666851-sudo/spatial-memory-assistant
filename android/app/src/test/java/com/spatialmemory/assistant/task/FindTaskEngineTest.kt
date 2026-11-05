@@ -58,6 +58,35 @@ class FindTaskEngineTest {
         assertEquals(FindStatus.ANNOUNCED, engine.task?.status)
     }
 
+    @Test fun `cancelled or completed tasks cannot accept late confirmations`() {
+        for (cancel in listOf(true, false)) {
+            val engine = FindTaskEngine()
+            val task = engine.start("水杯", "specific-id", CameraSource.PHONE)
+            engine.semanticCandidate("one", 10)
+            if (cancel) engine.cancel() else engine.complete()
+            assertFalse(engine.isCurrent(result(task.id, "one", 10, true)))
+            assertNull(engine.verification(result(task.id, "one", 10, true)))
+        }
+    }
+
+    @Test fun `higher frame numbers are not the requested picture`() {
+        val engine = FindTaskEngine()
+        val task = engine.start("水杯", null, CameraSource.PHONE)
+        engine.semanticCandidate("one", 10)
+        assertNull(engine.verification(result(task.id, "one", 11, true)))
+        assertEquals(FindStatus.CANDIDATE, engine.task?.status)
+    }
+
+    @Test fun `low confidence and invalid confidence never announce found`() {
+        for (confidence in listOf(0.79f, Float.NaN)) {
+            val engine = FindTaskEngine()
+            val task = engine.start("水杯", null, CameraSource.PHONE)
+            engine.semanticCandidate("one", 10)
+            assertNull(engine.verification(result(task.id, "one", 10, true).copy(confidence = confidence)))
+            assertFalse(engine.task!!.targetAnnounced)
+        }
+    }
+
     private fun candidate(task: String, id: String, frame: Long, box: Box) = ObjectCandidate(
         id, task, frame, "mouse", .9f, null, .9f, box,
         FramePacket(frame, CameraSource.PHONE, frame, byteArrayOf()), byteArrayOf(), 640, 480,
